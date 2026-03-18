@@ -23,6 +23,7 @@ export default function Admin() {
   const [selectedMatch, setSelectedMatch] = useState('')
   const [selectedPlayer, setSelectedPlayer] = useState('')
   const [releaseRequests, setReleaseRequests] = useState([])
+  const [leagueMembers, setLeagueMembers] = useState([])
   const [perf, setPerf] = useState({
     runs:0, balls_faced:0, fours:0, sixes:0, wickets:0,
     catches:0, stumpings:0, run_outs:0, maidens:0,
@@ -54,6 +55,14 @@ export default function Admin() {
       .order('requested_at', { ascending: false })
     setReleaseRequests(releases || [])
 
+    if (mem) {
+      const { data: members } = await supabase
+        .from('league_members')
+        .select('*, profiles(*)')
+        .eq('league_id', mem.league_id)
+      setLeagueMembers(members || [])
+    }
+
     setLoading(false)
   }
 
@@ -74,9 +83,7 @@ export default function Admin() {
   }
 
   async function updateAuctionDate() {
-    await supabase.from('leagues')
-      .update({ auction_date: auctionDate })
-      .eq('id', league.id)
+    await supabase.from('leagues').update({ auction_date: auctionDate }).eq('id', league.id)
     flash('Auction date updated!')
     load()
   }
@@ -127,62 +134,69 @@ export default function Admin() {
         })
       }
     }
-    flash(`Saved! ${points} pts — ${breakdown.map(b => `${b.label}: ${b.pts > 0 ? '+' : ''}${b.pts}`).join(', ')}`)
+    flash(`Saved! ${points} pts — ${breakdown.map(b => `${b.label}: ${b.pts>0?'+':''}${b.pts}`).join(', ')}`)
     setPerf({ runs:0, balls_faced:0, fours:0, sixes:0, wickets:0, catches:0, stumpings:0, run_outs:0, maidens:0, economy:0, overs:0, is_duck:false, is_lbw:false, is_bowled:false })
   }
 
   async function handleRelease(request, decision) {
     if (decision === 'approved') {
-      // Step 1: Get bought price
       const { data: squadEntry } = await supabase
         .from('squad').select('bought_price')
         .eq('player_id', request.player_id)
         .eq('league_id', request.league_id)
         .single()
-
       if (!squadEntry) { flash('Error: Squad entry not found!'); return }
-
-      // Step 2: Delete player from squad
       const { error: deleteError } = await supabase
         .from('squad').delete()
         .eq('player_id', request.player_id)
         .eq('league_id', request.league_id)
         .eq('user_id', request.user_id)
-
       if (deleteError) { flash('Delete failed: ' + deleteError.message); return }
-
-      // Step 3: Get current purse
       const { data: memData } = await supabase
         .from('league_members').select('purse_remaining')
         .eq('league_id', request.league_id)
         .eq('user_id', request.user_id)
         .single()
-
       if (memData) {
-        // Step 4: Refund — never exceed 120
         const newPurse = Math.min(120, memData.purse_remaining + squadEntry.bought_price)
-        const { error: purseError } = await supabase
-          .from('league_members')
+        await supabase.from('league_members')
           .update({ purse_remaining: newPurse })
           .eq('league_id', request.league_id)
           .eq('user_id', request.user_id)
-        if (purseError) { flash('Purse update failed: ' + purseError.message); return }
       }
-
       flash(`✅ ${request.players?.name} released! ₹${squadEntry.bought_price} Cr refunded to ${request.profiles?.name}.`)
     } else {
       flash(`❌ Rejected — ${request.players?.name} stays in squad.`)
     }
-
-    // Step 5: Mark request resolved
     await supabase.from('release_requests')
       .update({ status: decision, resolved_at: new Date().toISOString() })
       .eq('id', request.id)
-
     load()
   }
 
-  const TABS = ['league', 'players', 'matches', 'performances', 'releases']
+  async function removeUser(userId, userName) {
+    if (!confirm(`Remove ${userName} from the league? This will also delete their squad and bids.`)) return
+    // Delete their squad
+    await supabase.from('squad').delete()
+      .eq('user_id', userId).eq('league_id', league.id)
+    // Delete their bids
+    await supabase.from('auction_bids').delete()
+      .eq('bidder_id', userId).eq('league_id', league.id)
+    // Delete their match points
+    await supabase.from('match_points').delete()
+      .eq('user_id', userId).eq('league_id', league.id)
+    // Delete their release requests
+    await supabase.from('release_requests').delete()
+      .eq('user_id', userId).eq('league_id', league.id)
+    // Remove from league
+    const { error } = await supabase.from('league_members').delete()
+      .eq('user_id', userId).eq('league_id', league.id)
+    if (error) flash('Error removing user: ' + error.message)
+    else flash(`✅ ${userName} removed from league.`)
+    load()
+  }
+
+  const TABS = ['league', 'players', 'matches', 'performances', 'releases', 'members']
 
   if (loading) return (
     <div style={{ display:'flex',alignItems:'center',justifyContent:'center',height:300 }}>
@@ -194,7 +208,7 @@ export default function Admin() {
     <div>
       <div className="fade-in" style={{ marginBottom:24 }}>
         <h1 style={{ fontFamily:'Rajdhani',fontSize:32,fontWeight:700 }}>Admin Panel</h1>
-        <div style={{ color:'var(--muted)',fontSize:14,marginTop:2 }}>Manage league, players, matches, performances and releases</div>
+        <div style={{ color:'var(--muted)',fontSize:14,marginTop:2 }}>Manage league, players, matches, performances, releases and members</div>
       </div>
 
       {msg && (
@@ -207,7 +221,7 @@ export default function Admin() {
       )}
 
       {/* Tabs */}
-      <div style={{ display:'flex',gap:4,background:'var(--navy2)',borderRadius:12,padding:4,marginBottom:24,width:'fit-content' }}>
+      <div style={{ display:'flex',gap:4,background:'var(--navy2)',borderRadius:12,padding:4,marginBottom:24,width:'fit-content',flexWrap:'wrap' }}>
         {TABS.map(t => (
           <button key={t} onClick={() => setTab(t)} style={{
             padding:'8px 18px',borderRadius:9,fontSize:13,fontWeight:500,
@@ -245,8 +259,8 @@ export default function Admin() {
                   <div style={{ fontFamily:'Rajdhani',fontSize:20,fontWeight:700,color:'var(--gold)' }}>{league.name}</div>
                 </div>
                 <div style={{ marginBottom:16 }}>
-                  <div style={{ fontSize:12,color:'var(--muted)',marginBottom:4 }}>Invite Code (share with friends)</div>
-                  <div style={{ fontFamily:'Rajdhani',fontSize:26,fontWeight:700,letterSpacing:2,color:'var(--text)' }}>{league.invite_code?.toUpperCase()}</div>
+                  <div style={{ fontSize:12,color:'var(--muted)',marginBottom:4 }}>Invite Code</div>
+                  <div style={{ fontFamily:'Rajdhani',fontSize:26,fontWeight:700,letterSpacing:2 }}>{league.invite_code?.toUpperCase()}</div>
                 </div>
                 <div>
                   <div style={{ fontSize:12,color:'var(--muted)',marginBottom:6 }}>Auction Date & Time</div>
@@ -259,7 +273,7 @@ export default function Admin() {
               <div className="card" style={{ padding:24 }}>
                 <div style={{ fontFamily:'Rajdhani',fontSize:18,fontWeight:600,marginBottom:4 }}>Purse Per Friend</div>
                 <div style={{ fontFamily:'Rajdhani',fontSize:32,fontWeight:700,color:'var(--gold)' }}>₹120 Crore</div>
-                <div style={{ fontSize:12,color:'var(--muted)',marginTop:4 }}>Same as IPL 2025 official auction limit</div>
+                <div style={{ fontSize:12,color:'var(--muted)',marginTop:4 }}>Same as IPL 2025 official limit</div>
               </div>
             </div>
           )}
@@ -271,15 +285,8 @@ export default function Admin() {
         <div className="fade-in" style={{ maxWidth:520 }}>
           <div className="card" style={{ padding:24 }}>
             <div style={{ fontFamily:'Rajdhani',fontSize:20,fontWeight:600,marginBottom:8 }}>Seed IPL Players</div>
-            <div style={{ fontSize:14,color:'var(--text2)',marginBottom:16 }}>
-              Load all {IPL_PLAYERS.length} IPL players into the database. Only needed once!
-            </div>
-            <button className="btn btn-primary" style={{ width:'100%' }} onClick={seedPlayers}>
-              🏏 Load All IPL Players ({IPL_PLAYERS.length})
-            </button>
-            <div style={{ marginTop:12,fontSize:12,color:'var(--muted)' }}>
-              Includes: MI, CSK, RCB, KKR, RR, DC, PBKS, SRH, GT, LSG
-            </div>
+            <div style={{ fontSize:14,color:'var(--text2)',marginBottom:16 }}>Load all {IPL_PLAYERS.length} IPL players. Only needed once!</div>
+            <button className="btn btn-primary" style={{ width:'100%' }} onClick={seedPlayers}>🏏 Load All IPL Players ({IPL_PLAYERS.length})</button>
           </div>
         </div>
       )}
@@ -298,22 +305,18 @@ export default function Admin() {
             <input className="input" placeholder="Match number (optional)" type="number" value={matchNumber} onChange={e => setMatchNumber(e.target.value)} style={{ marginBottom:16 }} />
             <button className="btn btn-primary" style={{ width:'100%' }} onClick={addMatch}>Add Match</button>
           </div>
-
           <div style={{ fontFamily:'Rajdhani',fontSize:18,fontWeight:600,marginBottom:12 }}>All Matches ({matches.length})</div>
           <div style={{ display:'flex',flexDirection:'column',gap:8,maxWidth:600 }}>
             {matches.map(m => (
               <div key={m.id} className="card" style={{ padding:'12px 16px',display:'flex',alignItems:'center',justifyContent:'space-between' }}>
                 <div>
                   <div style={{ fontFamily:'Rajdhani',fontSize:16,fontWeight:700 }}>{m.team1} vs {m.team2}</div>
-                  <div style={{ fontSize:12,color:'var(--muted)' }}>
-                    {m.match_date ? new Date(m.match_date).toLocaleString('en-IN') : 'Date TBD'}
-                  </div>
+                  <div style={{ fontSize:12,color:'var(--muted)' }}>{m.match_date ? new Date(m.match_date).toLocaleString('en-IN') : 'Date TBD'}</div>
                 </div>
                 <div style={{ display:'flex',gap:6 }}>
                   {['upcoming','live','completed'].map(s => (
                     <button key={s} onClick={() => updateMatchStatus(m.id, s)} style={{
-                      padding:'4px 10px',borderRadius:6,fontSize:11,fontWeight:600,
-                      border:'none',cursor:'pointer',
+                      padding:'4px 10px',borderRadius:6,fontSize:11,fontWeight:600,border:'none',cursor:'pointer',
                       background:m.status===s?(s==='live'?'var(--red)':s==='completed'?'var(--teal)':'var(--navy4)'):'var(--navy3)',
                       color:m.status===s?(s==='live'?'#fff':s==='completed'?'var(--navy)':'var(--text)'):'var(--muted)'
                     }}>{s}</button>
@@ -321,7 +324,6 @@ export default function Admin() {
                 </div>
               </div>
             ))}
-            {matches.length === 0 && <div style={{ color:'var(--muted)',fontSize:14 }}>No matches yet.</div>}
           </div>
         </div>
       )}
@@ -336,45 +338,33 @@ export default function Admin() {
                 <div style={{ fontSize:12,color:'var(--muted)',marginBottom:4 }}>Match</div>
                 <select className="input" value={selectedMatch} onChange={e => setSelectedMatch(e.target.value)}>
                   <option value="">Select match...</option>
-                  {matches.map(m => (
-                    <option key={m.id} value={m.id}>{m.team1} vs {m.team2} · {m.match_date ? new Date(m.match_date).toLocaleDateString() : 'TBD'}</option>
-                  ))}
+                  {matches.map(m => <option key={m.id} value={m.id}>{m.team1} vs {m.team2} · {m.match_date ? new Date(m.match_date).toLocaleDateString() : 'TBD'}</option>)}
                 </select>
               </div>
               <div>
                 <div style={{ fontSize:12,color:'var(--muted)',marginBottom:4 }}>Player</div>
                 <select className="input" value={selectedPlayer} onChange={e => setSelectedPlayer(e.target.value)}>
                   <option value="">Select player...</option>
-                  {players.map(p => (
-                    <option key={p.id} value={p.id}>{p.name} ({p.team})</option>
-                  ))}
+                  {players.map(p => <option key={p.id} value={p.id}>{p.name} ({p.team})</option>)}
                 </select>
               </div>
             </div>
-
             <div style={{ fontFamily:'Rajdhani',fontSize:16,fontWeight:600,color:'var(--gold)',marginBottom:10 }}>Batting</div>
             <div style={{ display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8,marginBottom:10 }}>
               {[['runs','Runs'],['balls_faced','Balls'],['fours','4s'],['sixes','6s']].map(([k,l]) => (
-                <div key={k}>
-                  <div style={{ fontSize:11,color:'var(--muted)',marginBottom:3 }}>{l}</div>
-                  <input className="input" type="number" min="0" value={perf[k]} onChange={e => setPerf(p => ({ ...p,[k]:+e.target.value }))} />
-                </div>
+                <div key={k}><div style={{ fontSize:11,color:'var(--muted)',marginBottom:3 }}>{l}</div><input className="input" type="number" min="0" value={perf[k]} onChange={e => setPerf(p => ({ ...p,[k]:+e.target.value }))} /></div>
               ))}
             </div>
             <div style={{ display:'flex',gap:16,marginBottom:14 }}>
               <label style={{ display:'flex',alignItems:'center',gap:6,fontSize:13,cursor:'pointer' }}>
                 <input type="checkbox" checked={perf.is_duck} onChange={e => setPerf(p => ({ ...p,is_duck:e.target.checked }))} />
-                <span style={{ color:'var(--text2)' }}>Duck (out for 0)</span>
+                <span style={{ color:'var(--text2)' }}>Duck</span>
               </label>
             </div>
-
             <div style={{ fontFamily:'Rajdhani',fontSize:16,fontWeight:600,color:'var(--teal)',marginBottom:10 }}>Bowling</div>
             <div style={{ display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8,marginBottom:10 }}>
               {[['wickets','Wickets'],['overs','Overs'],['maidens','Maidens'],['economy','Economy']].map(([k,l]) => (
-                <div key={k}>
-                  <div style={{ fontSize:11,color:'var(--muted)',marginBottom:3 }}>{l}</div>
-                  <input className="input" type="number" step="0.1" min="0" value={perf[k]} onChange={e => setPerf(p => ({ ...p,[k]:+e.target.value }))} />
-                </div>
+                <div key={k}><div style={{ fontSize:11,color:'var(--muted)',marginBottom:3 }}>{l}</div><input className="input" type="number" step="0.1" min="0" value={perf[k]} onChange={e => setPerf(p => ({ ...p,[k]:+e.target.value }))} /></div>
               ))}
             </div>
             <div style={{ display:'flex',gap:16,marginBottom:14 }}>
@@ -385,29 +375,18 @@ export default function Admin() {
                 </label>
               ))}
             </div>
-
             <div style={{ fontFamily:'Rajdhani',fontSize:16,fontWeight:600,color:'var(--blue)',marginBottom:10 }}>Fielding</div>
             <div style={{ display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginBottom:20 }}>
               {[['catches','Catches'],['stumpings','Stumpings'],['run_outs','Run Outs']].map(([k,l]) => (
-                <div key={k}>
-                  <div style={{ fontSize:11,color:'var(--muted)',marginBottom:3 }}>{l}</div>
-                  <input className="input" type="number" min="0" value={perf[k]} onChange={e => setPerf(p => ({ ...p,[k]:+e.target.value }))} />
-                </div>
+                <div key={k}><div style={{ fontSize:11,color:'var(--muted)',marginBottom:3 }}>{l}</div><input className="input" type="number" min="0" value={perf[k]} onChange={e => setPerf(p => ({ ...p,[k]:+e.target.value }))} /></div>
               ))}
             </div>
-
             <div style={{ padding:'12px 16px',background:'rgba(245,166,35,0.08)',border:'1px solid rgba(245,166,35,0.2)',borderRadius:10,marginBottom:16 }}>
               <div style={{ fontSize:12,color:'var(--muted)',marginBottom:4 }}>Fantasy Points Preview</div>
-              <div style={{ fontFamily:'Rajdhani',fontSize:28,fontWeight:700,color:'var(--gold)' }}>
-                {calculateFantasyPoints(perf).points} pts
-              </div>
-              <div style={{ fontSize:11,color:'var(--text2)',marginTop:4 }}>
-                {calculateFantasyPoints(perf).breakdown.map(b => `${b.label}: ${b.pts>0?'+':''}${b.pts}`).join(' · ')}
-              </div>
+              <div style={{ fontFamily:'Rajdhani',fontSize:28,fontWeight:700,color:'var(--gold)' }}>{calculateFantasyPoints(perf).points} pts</div>
+              <div style={{ fontSize:11,color:'var(--text2)',marginTop:4 }}>{calculateFantasyPoints(perf).breakdown.map(b => `${b.label}: ${b.pts>0?'+':''}${b.pts}`).join(' · ')}</div>
             </div>
-            <button className="btn btn-primary" style={{ width:'100%',padding:14 }} onClick={submitPerformance}>
-              Save Performance & Calculate Points
-            </button>
+            <button className="btn btn-primary" style={{ width:'100%',padding:14 }} onClick={submitPerformance}>Save Performance & Calculate Points</button>
           </div>
         </div>
       )}
@@ -418,12 +397,9 @@ export default function Admin() {
           <div style={{ fontFamily:'Rajdhani',fontSize:20,fontWeight:600,marginBottom:16,display:'flex',alignItems:'center',gap:10 }}>
             Pending Release Requests
             {releaseRequests.length > 0 && (
-              <span style={{ background:'var(--red)',color:'#fff',fontSize:12,padding:'2px 10px',borderRadius:20,fontWeight:700 }}>
-                {releaseRequests.length}
-              </span>
+              <span style={{ background:'var(--red)',color:'#fff',fontSize:12,padding:'2px 10px',borderRadius:20,fontWeight:700 }}>{releaseRequests.length}</span>
             )}
           </div>
-
           {releaseRequests.length === 0 ? (
             <div style={{ padding:40,textAlign:'center',background:'var(--navy2)',border:'1px solid var(--border)',borderRadius:'var(--radius)',color:'var(--muted)' }}>
               <div style={{ fontSize:36,marginBottom:12 }}>✅</div>
@@ -438,24 +414,58 @@ export default function Admin() {
                     <div style={{ fontSize:12,color:'var(--muted)',marginTop:2 }}>
                       {r.players?.team} · Requested by <span style={{ color:'var(--text2)',fontWeight:500 }}>{r.profiles?.name}</span>
                     </div>
-                    <div style={{ fontSize:11,color:'var(--muted)',marginTop:2 }}>
-                      {new Date(r.requested_at).toLocaleString('en-IN')}
-                    </div>
+                    <div style={{ fontSize:11,color:'var(--muted)',marginTop:2 }}>{new Date(r.requested_at).toLocaleString('en-IN')}</div>
                   </div>
                   <div style={{ display:'flex',gap:8,flexShrink:0,marginLeft:12 }}>
-                    <button className="btn btn-teal" style={{ fontSize:12,padding:'8px 16px' }}
-                      onClick={() => handleRelease(r, 'approved')}>
-                      ✓ Approve
-                    </button>
-                    <button className="btn btn-danger" style={{ fontSize:12,padding:'8px 16px' }}
-                      onClick={() => handleRelease(r, 'rejected')}>
-                      ✗ Reject
-                    </button>
+                    <button className="btn btn-teal" style={{ fontSize:12,padding:'8px 16px' }} onClick={() => handleRelease(r,'approved')}>✓ Approve</button>
+                    <button className="btn btn-danger" style={{ fontSize:12,padding:'8px 16px' }} onClick={() => handleRelease(r,'rejected')}>✗ Reject</button>
                   </div>
                 </div>
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* MEMBERS TAB */}
+      {tab === 'members' && (
+        <div className="fade-in" style={{ maxWidth:600 }}>
+          <div style={{ fontFamily:'Rajdhani',fontSize:20,fontWeight:600,marginBottom:16 }}>
+            League Members ({leagueMembers.length})
+          </div>
+          <div style={{ display:'flex',flexDirection:'column',gap:10 }}>
+            {leagueMembers.map(m => {
+              const isMe = m.user_id === profile?.id
+              return (
+                <div key={m.id} className="card" style={{ padding:'16px 20px',display:'flex',alignItems:'center',justifyContent:'space-between' }}>
+                  <div style={{ display:'flex',alignItems:'center',gap:12 }}>
+                    <div style={{ width:40,height:40,borderRadius:'50%',background:'linear-gradient(135deg,var(--teal),var(--gold))',display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,fontWeight:700,color:'var(--navy)',flexShrink:0,overflow:'hidden' }}>
+                      {m.profiles?.avatar_url
+                        ? <img src={m.profiles.avatar_url} alt="" style={{ width:'100%',height:'100%',objectFit:'cover' }} />
+                        : m.profiles?.name?.slice(0,2).toUpperCase()}
+                    </div>
+                    <div>
+                      <div style={{ fontSize:14,fontWeight:600,display:'flex',alignItems:'center',gap:6 }}>
+                        {m.profiles?.name}
+                        {isMe && <span style={{ fontSize:10,background:'rgba(245,166,35,0.2)',color:'var(--gold)',borderRadius:4,padding:'1px 6px',fontWeight:700 }}>YOU</span>}
+                      </div>
+                      <div style={{ fontSize:12,color:'var(--muted)',marginTop:2 }}>{m.profiles?.email}</div>
+                      <div style={{ fontSize:12,color:'var(--teal)',marginTop:2 }}>₹{m.purse_remaining} Cr remaining</div>
+                    </div>
+                  </div>
+                  {!isMe && (
+                    <button className="btn btn-danger" style={{ fontSize:12,padding:'8px 14px',flexShrink:0 }}
+                      onClick={() => removeUser(m.user_id, m.profiles?.name)}>
+                      🚫 Remove
+                    </button>
+                  )}
+                  {isMe && (
+                    <span style={{ fontSize:11,color:'var(--gold)',fontWeight:700,padding:'6px 12px',background:'rgba(245,166,35,0.1)',borderRadius:8 }}>ADMIN</span>
+                  )}
+                </div>
+              )
+            })}
+          </div>
         </div>
       )}
     </div>
