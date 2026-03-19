@@ -259,23 +259,34 @@ function PlayersTab({ league, showMsg }) {
   }
 
   async function seedPlayers() {
-    if (!confirm(`Load all ${IPL_PLAYERS.length} IPL 2026 players? Duplicates will be skipped.`)) return
-    setSeeding(true)
-    let added = 0, skipped = 0
-    for (const p of IPL_PLAYERS) {
-      const { error } = await supabase.from('players').insert({
-        name: p.name, team: p.team, role: p.role, base_price: p.base_price,
-        batting_avg: p.batting_avg, strike_rate: p.strike_rate, economy: p.economy,
-        matches: p.matches, runs: p.runs, wickets: p.wickets, image_initials: p.image_initials
-      })
-      if (error) skipped++
-      else added++
-    }
-    showMsg(`✅ Done! ${added} players added, ${skipped} skipped.`)
-    loadPlayers()
-    setSeeding(false)
+  if (!confirm(`Load all ${IPL_PLAYERS.length} IPL 2026 players? This will clear old players first!`)) return
+  setSeeding(true)
+
+  // Check if any squad exists - don't delete if auction already started
+  const { data: existingSquad } = await supabase.from('squad').select('id').limit(1)
+  if (existingSquad?.length > 0) {
+    showMsg('⚠️ Auction already started — cannot reload players. Clear squads first.', 'error')
+    setSeeding(false); return
   }
 
+  // Safe to clear and reload
+  await supabase.from('auction_bids').delete().neq('id', '00000000-0000-0000-0000-000000000000')
+  await supabase.from('league_unsold_players').delete().neq('id', '00000000-0000-0000-0000-000000000000')
+  await supabase.from('players').delete().neq('id', '00000000-0000-0000-0000-000000000000')
+
+  let added = 0
+  for (const p of IPL_PLAYERS) {
+    const { error } = await supabase.from('players').insert({
+      name: p.name, team: p.team, role: p.role, base_price: p.base_price,
+      batting_avg: p.batting_avg, strike_rate: p.strike_rate, economy: p.economy,
+      matches: p.matches, runs: p.runs, wickets: p.wickets, image_initials: p.image_initials
+    })
+    if (!error) added++
+  }
+  showMsg(`✅ Done! ${added} players loaded fresh.`)
+  loadPlayers()
+  setSeeding(false)
+}
   async function deletePlayer(id) {
     if (!confirm('Delete this player?')) return
     const { error } = await supabase.from('players').delete().eq('id', id)
