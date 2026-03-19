@@ -276,3 +276,40 @@ input, select, textarea { font-family: 'Plus Jakarta Sans', sans-serif; }
 /* Scrollbar hidden */
 .no-scroll::-webkit-scrollbar { display: none; }
 .no-scroll { -ms-overflow-style: none; scrollbar-width: none; }
+/* ===== RESPONSIVE STYLES ===== */
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 768px) {
+  /* Stats grid - 2 cols on mobile */
+  .stats-grid-4 { grid-template-columns: repeat(2, 1fr) !important; }
+
+  /* Players grid - 1 col on mobile */
+  .players-grid { grid-template-columns: 1fr !important; }
+
+  /* Matches grid - 1 col on mobile */
+  .matches-grid { grid-template-columns: 1fr !important; }
+
+  /* Auction grid - stack on mobile */
+  .auction-grid { grid-template-columns: 1fr !important; }
+
+  /* Squad grid - 2 cols on mobile */
+  .squad-grid { grid-template-columns: repeat(2, 1fr) !important; }
+
+  /* Leaderboard - hide some cols */
+  .lb-hide-mobile { display: none !important; }
+
+  /* Reduce font sizes */
+  .section-title { font-size: 24px !important; }
+
+  /* Full width buttons */
+  .btn-mobile-full { width: 100% !important; }
+
+  /* Admin tabs wrap */
+  .admin-tabs { flex-wrap: wrap !important; }
+}
+
+@media (max-width: 480px) {
+  .stats-grid-4 { grid-template-columns: 1fr 1fr !important; }
+  .squad-grid { grid-template-columns: 1fr 1fr !important; }
+}
