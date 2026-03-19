@@ -4,6 +4,8 @@ import { useAuth } from '../contexts/AuthContext'
 
 export default function Dashboard() {
   const { profile } = useAuth()
+  const [allLeagues, setAllLeagues] = useState([])
+  const [selectedLeagueId, setSelectedLeagueId] = useState(null)
   const [members, setMembers] = useState([])
   const [league, setLeague] = useState(null)
   const [myStats, setMyStats] = useState(null)
@@ -17,35 +19,99 @@ export default function Dashboard() {
 
   async function loadData() {
     setLoading(true)
-    const { data: memberData } = await supabase
-      .from('league_members').select('*, leagues(*), profiles(*)')
-      .eq('user_id', profile.id).single()
-    if (!memberData) { setNoLeague(true); setLoading(false); return }
-    setLeague(memberData.leagues)
-    const { data: allMembers } = await supabase
-      .from('league_members').select('*, profiles(*)')
-      .eq('league_id', memberData.league_id)
-    const { data: pointsData } = await supabase
-      .from('match_points').select('*')
-      .eq('league_id', memberData.league_id)
-    const pointsMap = {}
-    pointsData?.forEach(p => { pointsMap[p.user_id] = (pointsMap[p.user_id] || 0) + p.total_points })
-    const enriched = (allMembers || []).map(m => ({
-      ...m, total_points: pointsMap[m.user_id] || 0
-    })).sort((a, b) => b.total_points - a.total_points)
-    setMembers(enriched)
-    setMyStats(enriched.find(m => m.user_id === profile.id))
+    try {
+      // Load ALL leagues user is in
+      const { data: allMem } = await supabase
+        .from('league_members').select('*, leagues(*)')
+        .eq('user_id', profile.id)
+      
+      if (!allMem || allMem.length === 0) {
+        setNoLeague(true); setLoading(false); return
+      }
+
+      const leagues = allMem.map(m => m.leagues).filter(Boolean)
+      setAllLeagues(leagues)
+      setNoLeague(false)
+
+      // Select first league by default or keep selected
+      const activeId = selectedLeagueId || leagues[0]?.id
+      setSelectedLeagueId(activeId)
+      await loadLeagueData(activeId)
+    } catch (e) {
+      console.error('Dashboard load error:', e)
+      setNoLeague(true)
+    }
+    setLoading(false)
+  }
+
+  async function loadLeagueData(leagueId) {
+    if (!leagueId) return
+    try {
+      const { data: lg } = await supabase.from('leagues').select('*').eq('id', leagueId).single()
+      setLeague(lg)
+
+      const { data: allMembers } = await supabase
+        .from('league_members').select('*, profiles(*)')
+        .eq('league_id', leagueId)
+
+      const { data: pointsData } = await supabase
+        .from('match_points').select('*')
+        .eq('league_id', leagueId)
+
+      const pointsMap = {}
+      pointsData?.forEach(p => { pointsMap[p.user_id] = (pointsMap[p.user_id] || 0) + p.total_points })
+      const enriched = (allMembers || []).map(m => ({
+        ...m, total_points: pointsMap[m.user_id] || 0
+      })).sort((a, b) => b.total_points - a.total_points)
+      setMembers(enriched)
+      setMyStats(enriched.find(m => m.user_id === profile.id))
+    } catch (e) {
+      console.error('League data error:', e)
+    }
+  }
+
+  async function switchLeague(leagueId) {
+    setSelectedLeagueId(leagueId)
+    setLoading(true)
+    await loadLeagueData(leagueId)
     setLoading(false)
   }
 
   async function joinLeague() {
     if (!joinCode.trim()) return
     setJoining(true); setJoinError('')
-    const { data: lg } = await supabase.from('leagues').select('*').eq('invite_code', joinCode.trim().toLowerCase()).single()
-    if (!lg) { setJoinError('Invalid invite code!'); setJoining(false); return }
-    const { error } = await supabase.from('league_members').insert({ league_id: lg.id, user_id: profile.id, purse_remaining: lg.purse_limit || 120, is_admin: false })
-    if (error) { setJoinError('Could not join. Already in this league?'); setJoining(false); return }
-    setNoLeague(false); loadData(); setJoining(false)
+    try {
+      const code = joinCode.trim().toLowerCase()
+      const { data: leagues } = await supabase
+        .from('leagues').select('*')
+        .ilike('invite_code', code)
+      if (!leagues || leagues.length === 0) {
+        setJoinError('Invalid invite code! Double check and try again.')
+        setJoining(false); return
+      }
+      const lg = leagues[0]
+
+      const { data: existing } = await supabase
+        .from('league_members').select('id')
+        .eq('league_id', lg.id).eq('user_id', profile.id).maybeSingle()
+      if (existing) {
+        setJoinError('You are already in this league!')
+        setJoining(false); return
+      }
+
+      const { error } = await supabase.from('league_members').insert({
+        league_id: lg.id, user_id: profile.id,
+        purse_remaining: lg.purse_limit || 120, is_admin: false
+      })
+      if (error) { setJoinError('Error: ' + error.message); setJoining(false); return }
+
+      setJoinCode('')
+      setNoLeague(false)
+      await loadData()
+    } catch (e) {
+      setJoinError('Something went wrong: ' + e.message)
+    }
+    setJoining(false)
   }
 
   const myRank = members.findIndex(m => m.user_id === profile?.id) + 1
@@ -62,16 +128,23 @@ export default function Dashboard() {
     <div className="fade-up" style={{ maxWidth:480, margin:'40px auto', textAlign:'center', padding:'0 16px' }}>
       <div style={{ fontSize:56, marginBottom:16 }}>🏟️</div>
       <h2 style={{ fontFamily:'Rajdhani', fontSize:28, fontWeight:700, marginBottom:8 }}>You're not in a league yet</h2>
-      <p style={{ color:'var(--text2)', marginBottom:28, lineHeight:1.6, fontSize:14 }}>Join your friends' league with an invite code, or create one in the Admin panel.</p>
+      <p style={{ color:'var(--text2)', marginBottom:28, lineHeight:1.6, fontSize:14 }}>
+        Ask your friends for the invite code and join below!
+      </p>
       <div style={{ background:'var(--navy2)', border:'1px solid var(--border2)', borderRadius:20, padding:24 }}>
         <div style={{ fontSize:13, color:'var(--text2)', marginBottom:10, fontWeight:500 }}>Enter invite code:</div>
-        <input className="input" placeholder="e.g. A3F9BC12" value={joinCode} onChange={e => setJoinCode(e.target.value)} style={{ marginBottom:10, textAlign:'center', fontSize:16, letterSpacing:2, fontFamily:'Rajdhani', fontWeight:700 }} />
-        {joinError && <div style={{ color:'var(--red)', fontSize:13, marginBottom:10, padding:'8px 12px', background:'var(--red2)', borderRadius:8 }}>{joinError}</div>}
-        <button className="btn btn-primary" style={{ width:'100%', padding:14 }} onClick={joinLeague} disabled={joining}>
-          {joining ? 'Joining...' : '🏏 Join League'}
+        <input className="input" placeholder="e.g. A3F9BC12" value={joinCode}
+          onChange={e => setJoinCode(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && joinLeague()}
+          style={{ marginBottom:10, textAlign:'center', fontSize:18, letterSpacing:3, fontFamily:'Rajdhani', fontWeight:700, textTransform:'uppercase' }} />
+        {joinError && (
+          <div style={{ color:'var(--red)', fontSize:13, marginBottom:10, padding:'8px 12px', background:'var(--red2)', borderRadius:8 }}>{joinError}</div>
+        )}
+        <button className="btn btn-primary" style={{ width:'100%', padding:14, fontSize:15 }} onClick={joinLeague} disabled={joining}>
+          {joining ? '⟳ Joining...' : '🏏 Join League'}
         </button>
         <div style={{ marginTop:14, fontSize:13, color:'var(--text3)' }}>
-          Create a league? Go to <a href="/admin" style={{ color:'var(--gold)', fontWeight:600 }}>Admin panel</a>
+          Want to create a league? Go to <a href="/admin" style={{ color:'var(--gold)', fontWeight:600 }}>Admin panel</a>
         </div>
       </div>
     </div>
@@ -80,16 +153,53 @@ export default function Dashboard() {
   return (
     <div>
       {/* Header */}
-      <div className="fade-up" style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', marginBottom:24, gap:12 }}>
-        <div>
-          <div style={{ fontSize:11, color:'var(--text3)', textTransform:'uppercase', letterSpacing:'1px', fontWeight:600, marginBottom:4 }}>IPL 2026 Fantasy</div>
-          <h1 style={{ fontFamily:'Rajdhani', fontSize:'clamp(24px, 5vw, 36px)', fontWeight:700 }}>{league?.name}</h1>
-          <div style={{ color:'var(--text2)', fontSize:13, marginTop:4 }}>{members.length} friends · ₹120 Cr each</div>
+      <div className="fade-up" style={{ marginBottom:20 }}>
+        <div style={{ fontSize:11, color:'var(--text3)', textTransform:'uppercase', letterSpacing:'1px', fontWeight:600, marginBottom:4 }}>IPL 2026 Fantasy</div>
+        <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:12, flexWrap:'wrap' }}>
+          <h1 style={{ fontFamily:'Rajdhani', fontSize:'clamp(22px,5vw,34px)', fontWeight:700 }}>{league?.name}</h1>
+          <div style={{ display:'flex', alignItems:'center', gap:6, background:'rgba(255,71,87,0.1)', border:'1px solid rgba(255,71,87,0.2)', borderRadius:20, padding:'6px 12px', flexShrink:0 }}>
+            <div className="live-dot" />
+            <span style={{ fontSize:11, fontWeight:700, color:'var(--red)', letterSpacing:1 }}>LIVE</span>
+          </div>
         </div>
-        <div style={{ display:'flex', alignItems:'center', gap:6, background:'rgba(255,71,87,0.1)', border:'1px solid rgba(255,71,87,0.2)', borderRadius:20, padding:'6px 12px', flexShrink:0 }}>
-          <div className="live-dot" />
-          <span style={{ fontSize:11, fontWeight:700, color:'var(--red)', letterSpacing:1 }}>LIVE</span>
+        <div style={{ color:'var(--text2)', fontSize:13, marginTop:2 }}>{members.length} friends · ₹120 Cr each</div>
+      </div>
+
+      {/* League switcher - show if in multiple leagues */}
+      {allLeagues.length > 1 && (
+        <div style={{ marginBottom:20 }}>
+          <div style={{ fontSize:11, color:'var(--text3)', textTransform:'uppercase', letterSpacing:'1px', fontWeight:600, marginBottom:8 }}>Switch League</div>
+          <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+            {allLeagues.map(lg => (
+              <button key={lg.id} onClick={() => switchLeague(lg.id)} style={{
+                padding:'8px 16px', borderRadius:20, fontSize:13, fontWeight:600,
+                border:`1px solid ${selectedLeagueId===lg.id?'rgba(240,165,0,0.4)':'var(--border)'}`,
+                cursor:'pointer', transition:'all 0.15s',
+                background:selectedLeagueId===lg.id?'rgba(240,165,0,0.1)':'var(--navy2)',
+                color:selectedLeagueId===lg.id?'var(--gold)':'var(--text2)',
+              }}>{lg.name}</button>
+            ))}
+          </div>
         </div>
+      )}
+
+      {/* Join another league */}
+      <div style={{ marginBottom:20 }}>
+        <details>
+          <summary style={{ fontSize:13, color:'var(--text3)', cursor:'pointer', userSelect:'none', padding:'8px 0' }}>
+            + Join another league
+          </summary>
+          <div style={{ marginTop:10, display:'flex', gap:8, flexWrap:'wrap', alignItems:'center' }}>
+            <input className="input" placeholder="Enter invite code" value={joinCode}
+              onChange={e => setJoinCode(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && joinLeague()}
+              style={{ flex:1, minWidth:180, fontSize:14, letterSpacing:2, fontFamily:'Rajdhani', fontWeight:700, textTransform:'uppercase', padding:'8px 14px' }} />
+            <button className="btn btn-primary" onClick={joinLeague} disabled={joining} style={{ padding:'8px 18px', flexShrink:0 }}>
+              {joining ? '⟳' : 'Join'}
+            </button>
+          </div>
+          {joinError && <div style={{ color:'var(--red)', fontSize:12, marginTop:6 }}>{joinError}</div>}
+        </details>
       </div>
 
       {/* Stats */}
@@ -157,7 +267,7 @@ export default function Dashboard() {
             <div style={{ fontFamily:'Rajdhani', fontSize:26, fontWeight:700, color:'var(--gold)', letterSpacing:4 }}>{league.invite_code?.toUpperCase()}</div>
             <div style={{ fontSize:11, color:'var(--text2)', marginTop:1 }}>Share with friends to join</div>
           </div>
-          <button className="btn btn-primary" onClick={() => { navigator.clipboard.writeText(league.invite_code); alert('Copied!') }}>
+          <button className="btn btn-primary" onClick={() => { navigator.clipboard.writeText(league.invite_code?.toUpperCase()); alert('Copied!') }}>
             📋 Copy Code
           </button>
         </div>
@@ -179,6 +289,7 @@ function MySquad({ profile, league }) {
   useEffect(() => { if (profile && league) loadSquad() }, [profile, league])
 
   async function loadSquad() {
+    setLoading(true)
     const { data } = await supabase.from('squad').select('*, players(*)')
       .eq('league_id', league.id).eq('user_id', profile.id)
       .order('bought_price', { ascending: false })
@@ -190,7 +301,7 @@ function MySquad({ profile, league }) {
   }
 
   async function requestRelease(playerId, playerName, boughtPrice) {
-    if (!confirm(`Request release of ${playerName}?\nAdmin must approve. You'll get ₹${boughtPrice} Cr back.`)) return
+    if (!confirm(`Request release of ${playerName}?\nAdmin must approve. You'll get ₹${boughtPrice}Cr back.`)) return
     const { data: existing } = await supabase.from('release_requests').select('id')
       .eq('player_id', playerId).eq('league_id', league.id).eq('status', 'pending').maybeSingle()
     if (existing) { alert('Already requested! Waiting for admin.'); return }
@@ -205,6 +316,7 @@ function MySquad({ profile, league }) {
   const pendingIds = new Set(requests.map(r => r.player_id))
 
   if (loading) return null
+  if (!league) return null
 
   return (
     <div style={{ marginTop:24 }}>
@@ -235,7 +347,7 @@ function MySquad({ profile, league }) {
           {squad.map(s => {
             const isPending = pendingIds.has(s.player_id)
             return (
-              <div key={s.id} style={{ background:'var(--navy2)', border:`1px solid ${isPending?'rgba(240,165,0,0.3)':'var(--border)'}`, borderRadius:12, overflow:'hidden', transition:'all 0.2s' }}
+              <div key={s.id} style={{ background:'var(--navy2)', border:`1px solid ${isPending?'rgba(240,165,0,0.3)':s.is_traded?'rgba(0,212,170,0.3)':'var(--border)'}`, borderRadius:12, overflow:'hidden', transition:'all 0.2s' }}
                 onMouseEnter={e => { e.currentTarget.style.transform='translateY(-2px)'; e.currentTarget.style.boxShadow='0 6px 20px rgba(0,0,0,0.2)' }}
                 onMouseLeave={e => { e.currentTarget.style.transform='translateY(0)'; e.currentTarget.style.boxShadow='none' }}>
                 <div style={{ padding:'12px 12px 8px', display:'flex', alignItems:'center', gap:8 }}>
@@ -247,6 +359,7 @@ function MySquad({ profile, league }) {
                     <div style={{ fontSize:10, color:'var(--text3)', marginTop:2 }}>
                       {s.players?.team} · {s.players?.role?.replace('All-Rounder','AR').replace('WK-Batsman','WK')}
                     </div>
+                    {s.is_traded && <div style={{ fontSize:9, color:'var(--teal)', fontWeight:700, marginTop:2 }}>🔄 Traded from {s.traded_from?.split(' ')[0]}</div>}
                   </div>
                 </div>
                 <div style={{ background:'var(--navy3)', padding:'7px 12px', display:'flex', justifyContent:'space-between', alignItems:'center', borderTop:'1px solid var(--border)' }}>
@@ -303,7 +416,6 @@ function FriendsSquads({ profile, league, members }) {
         Friends' Squads
         <span style={{ color:'var(--text3)', fontSize:14, fontWeight:400, marginLeft:8 }}>({friends.length} friends)</span>
       </h2>
-
       <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
         {friends.map(m => {
           const friendSquad = squads[m.user_id] || []
@@ -350,7 +462,6 @@ function FriendsSquads({ profile, league, members }) {
                   {isOpen ? '▲' : '▼'}
                 </div>
               </div>
-
               {isOpen && (
                 <div style={{ borderTop:'1px solid var(--border)', padding:'14px 16px', background:'var(--navy3)' }}>
                   {friendSquad.length === 0 ? (
@@ -366,6 +477,7 @@ function FriendsSquads({ profile, league, members }) {
                             <div style={{ minWidth:0 }}>
                               <div style={{ fontSize:12, fontWeight:600, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{s.players?.name}</div>
                               <div style={{ fontSize:10, color:'var(--text3)', marginTop:1 }}>{s.players?.team}</div>
+                              {s.is_traded && <div style={{ fontSize:9, color:'var(--teal)', fontWeight:700 }}>🔄 Traded</div>}
                             </div>
                           </div>
                           <div style={{ background:'var(--navy4)', padding:'5px 12px', display:'flex', justifyContent:'space-between', alignItems:'center', borderTop:'1px solid var(--border)' }}>
