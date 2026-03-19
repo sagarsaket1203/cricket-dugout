@@ -30,8 +30,9 @@ export default function Players() {
 
   async function load() {
     setLoading(true)
-    const { data: mem } = await supabase.from('league_members').select('*, leagues(*)')
-      .eq('user_id', profile.id).single()
+    const { data: mems } = await supabase.from('league_members').select('*, leagues(*)')
+  .eq('user_id', profile.id)
+const mem = mems?.[0]
     if (mem) setLeague(mem.leagues)
     const { data: allPlayers } = await supabase.from('players').select('*').order('name')
     setPlayers(allPlayers || [])

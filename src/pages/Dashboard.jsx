@@ -14,26 +14,23 @@ export default function Dashboard() {
   const [joinCode, setJoinCode] = useState('')
   const [joining, setJoining] = useState(false)
   const [joinError, setJoinError] = useState('')
+  const [showLeave, setShowLeave] = useState(false)
+  const [showJoin, setShowJoin] = useState(false)
 
   useEffect(() => { if (profile) loadData() }, [profile])
 
   async function loadData() {
     setLoading(true)
     try {
-      // Load ALL leagues user is in
       const { data: allMem } = await supabase
         .from('league_members').select('*, leagues(*)')
         .eq('user_id', profile.id)
-      
       if (!allMem || allMem.length === 0) {
         setNoLeague(true); setLoading(false); return
       }
-
       const leagues = allMem.map(m => m.leagues).filter(Boolean)
       setAllLeagues(leagues)
       setNoLeague(false)
-
-      // Select first league by default or keep selected
       const activeId = selectedLeagueId || leagues[0]?.id
       setSelectedLeagueId(activeId)
       await loadLeagueData(activeId)
@@ -49,15 +46,12 @@ export default function Dashboard() {
     try {
       const { data: lg } = await supabase.from('leagues').select('*').eq('id', leagueId).single()
       setLeague(lg)
-
       const { data: allMembers } = await supabase
         .from('league_members').select('*, profiles(*)')
         .eq('league_id', leagueId)
-
       const { data: pointsData } = await supabase
         .from('match_points').select('*')
         .eq('league_id', leagueId)
-
       const pointsMap = {}
       pointsData?.forEach(p => { pointsMap[p.user_id] = (pointsMap[p.user_id] || 0) + p.total_points })
       const enriched = (allMembers || []).map(m => ({
@@ -90,7 +84,6 @@ export default function Dashboard() {
         setJoining(false); return
       }
       const lg = leagues[0]
-
       const { data: existing } = await supabase
         .from('league_members').select('id')
         .eq('league_id', lg.id).eq('user_id', profile.id).maybeSingle()
@@ -98,20 +91,43 @@ export default function Dashboard() {
         setJoinError('You are already in this league!')
         setJoining(false); return
       }
-
       const { error } = await supabase.from('league_members').insert({
         league_id: lg.id, user_id: profile.id,
         purse_remaining: lg.purse_limit || 120, is_admin: false
       })
       if (error) { setJoinError('Error: ' + error.message); setJoining(false); return }
-
       setJoinCode('')
-      setNoLeague(false)
+      setShowJoin(false)
       await loadData()
     } catch (e) {
       setJoinError('Something went wrong: ' + e.message)
     }
     setJoining(false)
+  }
+
+  async function leaveLeague() {
+    if (!league || !profile) return
+    if (!confirm(`Leave "${league.name}"? Your squad and all bids will be deleted permanently.`)) return
+    try {
+      await supabase.from('squad').delete().eq('league_id', league.id).eq('user_id', profile.id)
+      await supabase.from('auction_bids').delete().eq('league_id', league.id).eq('bidder_id', profile.id)
+      await supabase.from('match_points').delete().eq('league_id', league.id).eq('user_id', profile.id)
+      await supabase.from('release_requests').delete().eq('league_id', league.id).eq('user_id', profile.id)
+      await supabase.from('league_members').delete().eq('league_id', league.id).eq('user_id', profile.id)
+      const remaining = allLeagues.filter(l => l.id !== league.id)
+      if (remaining.length > 0) {
+        setSelectedLeagueId(remaining[0].id)
+        setAllLeagues(remaining)
+        await loadLeagueData(remaining[0].id)
+      } else {
+        setAllLeagues([])
+        setLeague(null)
+        setNoLeague(true)
+      }
+      setShowLeave(false)
+    } catch (e) {
+      alert('Error leaving league: ' + e.message)
+    }
   }
 
   const myRank = members.findIndex(m => m.user_id === profile?.id) + 1
@@ -156,23 +172,25 @@ export default function Dashboard() {
       <div className="fade-up" style={{ marginBottom:20 }}>
         <div style={{ fontSize:11, color:'var(--text3)', textTransform:'uppercase', letterSpacing:'1px', fontWeight:600, marginBottom:4 }}>IPL 2026 Fantasy</div>
         <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:12, flexWrap:'wrap' }}>
-          <h1 style={{ fontFamily:'Rajdhani', fontSize:'clamp(22px,5vw,34px)', fontWeight:700 }}>{league?.name}</h1>
+          <div>
+            <h1 style={{ fontFamily:'Rajdhani', fontSize:'clamp(22px,5vw,34px)', fontWeight:700 }}>{league?.name}</h1>
+            <div style={{ color:'var(--text2)', fontSize:13, marginTop:2 }}>{members.length} friends · ₹120 Cr each</div>
+          </div>
           <div style={{ display:'flex', alignItems:'center', gap:6, background:'rgba(255,71,87,0.1)', border:'1px solid rgba(255,71,87,0.2)', borderRadius:20, padding:'6px 12px', flexShrink:0 }}>
             <div className="live-dot" />
             <span style={{ fontSize:11, fontWeight:700, color:'var(--red)', letterSpacing:1 }}>LIVE</span>
           </div>
         </div>
-        <div style={{ color:'var(--text2)', fontSize:13, marginTop:2 }}>{members.length} friends · ₹120 Cr each</div>
       </div>
 
-      {/* League switcher - show if in multiple leagues */}
+      {/* League switcher */}
       {allLeagues.length > 1 && (
-        <div style={{ marginBottom:20 }}>
+        <div style={{ marginBottom:16 }}>
           <div style={{ fontSize:11, color:'var(--text3)', textTransform:'uppercase', letterSpacing:'1px', fontWeight:600, marginBottom:8 }}>Switch League</div>
           <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
             {allLeagues.map(lg => (
               <button key={lg.id} onClick={() => switchLeague(lg.id)} style={{
-                padding:'8px 16px', borderRadius:20, fontSize:13, fontWeight:600,
+                padding:'7px 14px', borderRadius:20, fontSize:13, fontWeight:600,
                 border:`1px solid ${selectedLeagueId===lg.id?'rgba(240,165,0,0.4)':'var(--border)'}`,
                 cursor:'pointer', transition:'all 0.15s',
                 background:selectedLeagueId===lg.id?'rgba(240,165,0,0.1)':'var(--navy2)',
@@ -183,24 +201,57 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Join another league */}
-      <div style={{ marginBottom:20 }}>
-        <details>
-          <summary style={{ fontSize:13, color:'var(--text3)', cursor:'pointer', userSelect:'none', padding:'8px 0' }}>
-            + Join another league
-          </summary>
-          <div style={{ marginTop:10, display:'flex', gap:8, flexWrap:'wrap', alignItems:'center' }}>
+      {/* Join + Leave buttons */}
+      <div style={{ display:'flex', gap:8, marginBottom:20, flexWrap:'wrap' }}>
+        <button onClick={() => { setShowJoin(!showJoin); setShowLeave(false) }} style={{
+          padding:'6px 14px', borderRadius:20, fontSize:12, fontWeight:600,
+          border:'1px solid var(--border)', cursor:'pointer',
+          background:showJoin?'rgba(0,212,170,0.1)':'var(--navy2)',
+          color:showJoin?'var(--teal)':'var(--text3)',
+        }}>+ Join another league</button>
+
+        <button onClick={() => { setShowLeave(!showLeave); setShowJoin(false) }} style={{
+          padding:'6px 14px', borderRadius:20, fontSize:12, fontWeight:600,
+          border:'1px solid var(--border)', cursor:'pointer',
+          background:showLeave?'rgba(255,71,87,0.1)':'var(--navy2)',
+          color:showLeave?'var(--red)':'var(--text3)',
+        }}>✕ Leave league</button>
+      </div>
+
+      {/* Join form */}
+      {showJoin && (
+        <div className="fade-in" style={{ padding:'16px 18px', background:'var(--navy2)', border:'1px solid rgba(0,212,170,0.2)', borderRadius:14, marginBottom:16 }}>
+          <div style={{ fontSize:13, fontWeight:600, color:'var(--teal)', marginBottom:10 }}>Join Another League</div>
+          <div style={{ display:'flex', gap:8, flexWrap:'wrap', alignItems:'center' }}>
             <input className="input" placeholder="Enter invite code" value={joinCode}
               onChange={e => setJoinCode(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && joinLeague()}
-              style={{ flex:1, minWidth:180, fontSize:14, letterSpacing:2, fontFamily:'Rajdhani', fontWeight:700, textTransform:'uppercase', padding:'8px 14px' }} />
-            <button className="btn btn-primary" onClick={joinLeague} disabled={joining} style={{ padding:'8px 18px', flexShrink:0 }}>
+              style={{ flex:1, minWidth:160, fontSize:14, letterSpacing:2, fontFamily:'Rajdhani', fontWeight:700, textTransform:'uppercase', padding:'8px 14px' }} />
+            <button className="btn btn-teal" onClick={joinLeague} disabled={joining} style={{ padding:'8px 20px', flexShrink:0 }}>
               {joining ? '⟳' : 'Join'}
             </button>
           </div>
-          {joinError && <div style={{ color:'var(--red)', fontSize:12, marginTop:6 }}>{joinError}</div>}
-        </details>
-      </div>
+          {joinError && <div style={{ color:'var(--red)', fontSize:12, marginTop:8 }}>{joinError}</div>}
+        </div>
+      )}
+
+      {/* Leave form */}
+      {showLeave && (
+        <div className="fade-in" style={{ padding:'16px 18px', background:'rgba(255,71,87,0.05)', border:'1px solid rgba(255,71,87,0.2)', borderRadius:14, marginBottom:16 }}>
+          <div style={{ fontSize:13, fontWeight:600, color:'var(--red)', marginBottom:6 }}>⚠️ Leave "{league?.name}"?</div>
+          <div style={{ fontSize:12, color:'var(--text2)', marginBottom:12, lineHeight:1.6 }}>
+            This will permanently delete your squad, bids and points in this league. This cannot be undone!
+          </div>
+          <div style={{ display:'flex', gap:8 }}>
+            <button className="btn btn-danger" style={{ flex:1, padding:10 }} onClick={leaveLeague}>
+              Yes, Leave League
+            </button>
+            <button className="btn btn-ghost" style={{ flex:1, padding:10 }} onClick={() => setShowLeave(false)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Stats */}
       <div style={{ display:'grid', gridTemplateColumns:'repeat(2,1fr)', gap:10, marginBottom:20 }}>
@@ -315,8 +366,7 @@ function MySquad({ profile, league }) {
   const totalSpent = squad.reduce((a, s) => a + s.bought_price, 0)
   const pendingIds = new Set(requests.map(r => r.player_id))
 
-  if (loading) return null
-  if (!league) return null
+  if (loading || !league) return null
 
   return (
     <div style={{ marginTop:24 }}>
@@ -359,7 +409,7 @@ function MySquad({ profile, league }) {
                     <div style={{ fontSize:10, color:'var(--text3)', marginTop:2 }}>
                       {s.players?.team} · {s.players?.role?.replace('All-Rounder','AR').replace('WK-Batsman','WK')}
                     </div>
-                    {s.is_traded && <div style={{ fontSize:9, color:'var(--teal)', fontWeight:700, marginTop:2 }}>🔄 Traded from {s.traded_from?.split(' ')[0]}</div>}
+                    {s.is_traded && <div style={{ fontSize:9, color:'var(--teal)', fontWeight:700, marginTop:2 }}>🔄 Traded</div>}
                   </div>
                 </div>
                 <div style={{ background:'var(--navy3)', padding:'7px 12px', display:'flex', justifyContent:'space-between', alignItems:'center', borderTop:'1px solid var(--border)' }}>
@@ -395,6 +445,7 @@ function FriendsSquads({ profile, league, members }) {
 
   async function loadAllSquads() {
     if (!league) return
+    setLoading(true)
     const { data } = await supabase
       .from('squad').select('*, players(*)')
       .eq('league_id', league.id)

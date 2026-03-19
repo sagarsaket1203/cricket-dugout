@@ -30,9 +30,9 @@ export default function Matches() {
   async function load() {
     setLoading(true)
     try {
-      const { data: mem } = await supabase
-        .from('league_members').select('*, leagues(*)')
-        .eq('user_id', profile.id).single()
+      const { data: mems } = await supabase.from('league_members').select('*, leagues(*)')
+  .eq('user_id', profile.id)
+const mem = mems?.[0]
       if (mem) { setLeague(mem.leagues); setMember(mem) }
 
       const { data: matchData } = await supabase

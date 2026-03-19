@@ -44,10 +44,11 @@ export default function Auction() {
   async function init() {
     setLoading(true)
     try {
-      const { data: mem } = await supabase
-        .from('league_members').select('*, leagues(*)')
-        .eq('user_id', profile.id).single()
-      if (!mem) { setLoading(false); return }
+  const { data: mems } = await supabase
+  .from('league_members').select('*, leagues(*)')
+  .eq('user_id', profile.id)
+if (!mems || mems.length === 0) { setLoading(false); return }
+const mem = mems[0]
       setLeague(mem.leagues)
       setMember(mem)
       leagueRef.current = mem.leagues
