@@ -119,23 +119,16 @@ export default function Dashboard() {
           {members.map((m, i) => {
             const isMe = m.user_id === profile?.id
             return (
-              <div key={m.id} style={{
-                display:'flex', alignItems:'center', gap:10,
-                padding:'12px 14px', borderBottom:'1px solid var(--border)',
-                background:isMe?'rgba(240,165,0,0.04)':'transparent',
-                position:'relative'
-              }}>
+              <div key={m.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'12px 14px', borderBottom:'1px solid var(--border)', background:isMe?'rgba(240,165,0,0.04)':'transparent', position:'relative' }}>
                 {isMe && <div style={{ position:'absolute', left:0, top:0, bottom:0, width:2, background:'var(--gold)' }} />}
-                <div style={{ width:28, height:28, borderRadius:'50%', flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center', fontSize:i<3?16:11, fontWeight:700,
-                  background:i<3?'transparent':'var(--navy4)', color:i<3?'inherit':'var(--text3)',
-                  border:i>=3?'1px solid var(--border)':'none' }}>
+                <div style={{ width:28, height:28, borderRadius:'50%', flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center', fontSize:i<3?16:11, fontWeight:700, background:i<3?'transparent':'var(--navy4)', border:i>=3?'1px solid var(--border)':'none', color:i>=3?'var(--text3)':'inherit' }}>
                   {i===0?'🥇':i===1?'🥈':i===2?'🥉':i+1}
                 </div>
                 <div style={{ width:30, height:30, borderRadius:'50%', background:'var(--navy4)', border:'1px solid var(--border2)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:11, fontWeight:700, color:'var(--text2)', flexShrink:0, overflow:'hidden' }}>
                   {m.profiles?.avatar_url ? <img src={m.profiles.avatar_url} alt="" style={{ width:'100%', height:'100%', objectFit:'cover' }} /> : m.profiles?.name?.slice(0,2).toUpperCase()}
                 </div>
                 <div style={{ flex:1, minWidth:0 }}>
-                  <div style={{ fontSize:13, fontWeight:600, display:'flex', alignItems:'center', gap:5, flexWrap:'wrap' }}>
+                  <div style={{ fontSize:13, fontWeight:600, display:'flex', alignItems:'center', gap:5 }}>
                     <span style={{ whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{m.profiles?.name}</span>
                     {isMe && <span style={{ fontSize:9, background:'rgba(240,165,0,0.2)', color:'var(--gold)', borderRadius:4, padding:'1px 5px', fontWeight:700, flexShrink:0 }}>YOU</span>}
                   </div>
@@ -171,6 +164,7 @@ export default function Dashboard() {
       )}
 
       <MySquad profile={profile} league={league} />
+      <FriendsSquads profile={profile} league={league} members={members} />
     </div>
   )
 }
@@ -179,9 +173,8 @@ function MySquad({ profile, league }) {
   const [squad, setSquad] = useState([])
   const [loading, setLoading] = useState(true)
   const [requests, setRequests] = useState([])
-  const ROLE_COLOR = { 'Batsman':'bat','Bowler':'bowl','All-Rounder':'ar','WK-Batsman':'wk' }
-  const ROLE_BG = { 'bat':'rgba(240,165,0,0.1)','bowl':'rgba(0,212,170,0.1)','ar':'rgba(255,71,87,0.1)','wk':'rgba(75,159,255,0.1)' }
-  const ROLE_TEXT = { 'bat':'var(--gold)','bowl':'var(--teal)','ar':'var(--red)','wk':'var(--blue)' }
+  const ROLE_BG = { 'Batsman':'rgba(240,165,0,0.1)','Bowler':'rgba(0,212,170,0.1)','All-Rounder':'rgba(255,71,87,0.1)','WK-Batsman':'rgba(75,159,255,0.1)' }
+  const ROLE_TEXT = { 'Batsman':'var(--gold)','Bowler':'var(--teal)','All-Rounder':'var(--red)','WK-Batsman':'var(--blue)' }
 
   useEffect(() => { if (profile && league) loadSquad() }, [profile, league])
 
@@ -214,10 +207,10 @@ function MySquad({ profile, league }) {
   if (loading) return null
 
   return (
-    <div>
+    <div style={{ marginTop:24 }}>
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:14, flexWrap:'wrap', gap:8 }}>
         <h2 style={{ fontFamily:'Rajdhani', fontSize:20, fontWeight:700 }}>
-          My Squad <span style={{ color:'var(--text3)', fontSize:15, fontWeight:400 }}>({squad.length})</span>
+          My Squad <span style={{ color:'var(--text3)', fontSize:15, fontWeight:400 }}>({squad.length}/15)</span>
         </h2>
         <div style={{ display:'flex', gap:8 }}>
           <div style={{ padding:'5px 12px', background:'var(--red2)', border:'1px solid rgba(255,71,87,0.2)', borderRadius:8 }}>
@@ -238,19 +231,22 @@ function MySquad({ profile, league }) {
           <div style={{ fontSize:13 }}>Go to Auction to start bidding!</div>
         </div>
       ) : (
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(160px, 1fr))', gap:10 }}>
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(150px,1fr))', gap:10 }}>
           {squad.map(s => {
-            const rc = ROLE_COLOR[s.players?.role]
             const isPending = pendingIds.has(s.player_id)
             return (
-              <div key={s.id} style={{ background:'var(--navy2)', border:`1px solid ${isPending?'rgba(240,165,0,0.3)':'var(--border)'}`, borderRadius:12, overflow:'hidden' }}>
+              <div key={s.id} style={{ background:'var(--navy2)', border:`1px solid ${isPending?'rgba(240,165,0,0.3)':'var(--border)'}`, borderRadius:12, overflow:'hidden', transition:'all 0.2s' }}
+                onMouseEnter={e => { e.currentTarget.style.transform='translateY(-2px)'; e.currentTarget.style.boxShadow='0 6px 20px rgba(0,0,0,0.2)' }}
+                onMouseLeave={e => { e.currentTarget.style.transform='translateY(0)'; e.currentTarget.style.boxShadow='none' }}>
                 <div style={{ padding:'12px 12px 8px', display:'flex', alignItems:'center', gap:8 }}>
-                  <div style={{ width:38, height:38, borderRadius:9, flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Rajdhani', fontSize:13, fontWeight:700, background:ROLE_BG[rc], color:ROLE_TEXT[rc] }}>
+                  <div style={{ width:38, height:38, borderRadius:9, flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Rajdhani', fontSize:13, fontWeight:700, background:ROLE_BG[s.players?.role], color:ROLE_TEXT[s.players?.role] }}>
                     {s.players?.image_initials||s.players?.name?.slice(0,2)}
                   </div>
                   <div style={{ minWidth:0 }}>
                     <div style={{ fontSize:12, fontWeight:600, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{s.players?.name}</div>
-                    <div style={{ fontSize:10, color:'var(--text3)', marginTop:2 }}>{s.players?.team}</div>
+                    <div style={{ fontSize:10, color:'var(--text3)', marginTop:2 }}>
+                      {s.players?.team} · {s.players?.role?.replace('All-Rounder','AR').replace('WK-Batsman','WK')}
+                    </div>
                   </div>
                 </div>
                 <div style={{ background:'var(--navy3)', padding:'7px 12px', display:'flex', justifyContent:'space-between', alignItems:'center', borderTop:'1px solid var(--border)' }}>
@@ -269,6 +265,125 @@ function MySquad({ profile, league }) {
           })}
         </div>
       )}
+    </div>
+  )
+}
+
+function FriendsSquads({ profile, league, members }) {
+  const [squads, setSquads] = useState({})
+  const [loading, setLoading] = useState(true)
+  const [openFriend, setOpenFriend] = useState(null)
+  const ROLE_BG = { 'Batsman':'rgba(240,165,0,0.1)','Bowler':'rgba(0,212,170,0.1)','All-Rounder':'rgba(255,71,87,0.1)','WK-Batsman':'rgba(75,159,255,0.1)' }
+  const ROLE_TEXT = { 'Batsman':'var(--gold)','Bowler':'var(--teal)','All-Rounder':'var(--red)','WK-Batsman':'var(--blue)' }
+
+  useEffect(() => {
+    if (league && members?.length) loadAllSquads()
+  }, [league, members])
+
+  async function loadAllSquads() {
+    if (!league) return
+    const { data } = await supabase
+      .from('squad').select('*, players(*)')
+      .eq('league_id', league.id)
+    const grouped = {}
+    data?.forEach(s => {
+      if (!grouped[s.user_id]) grouped[s.user_id] = []
+      grouped[s.user_id].push(s)
+    })
+    setSquads(grouped)
+    setLoading(false)
+  }
+
+  const friends = members.filter(m => m.user_id !== profile?.id)
+  if (loading || friends.length === 0) return null
+
+  return (
+    <div style={{ marginTop:28 }}>
+      <h2 style={{ fontFamily:'Rajdhani', fontSize:20, fontWeight:700, marginBottom:16 }}>
+        Friends' Squads
+        <span style={{ color:'var(--text3)', fontSize:14, fontWeight:400, marginLeft:8 }}>({friends.length} friends)</span>
+      </h2>
+
+      <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+        {friends.map(m => {
+          const friendSquad = squads[m.user_id] || []
+          const isOpen = openFriend === m.user_id
+          const spent = friendSquad.reduce((a, s) => a + (s.bought_price || 0), 0)
+          return (
+            <div key={m.user_id} style={{ background:'var(--navy2)', border:'1px solid var(--border)', borderRadius:14, overflow:'hidden' }}>
+              <div onClick={() => setOpenFriend(isOpen ? null : m.user_id)}
+                style={{ padding:'14px 16px', display:'flex', alignItems:'center', gap:12, cursor:'pointer' }}
+                onMouseEnter={e => e.currentTarget.style.background='rgba(255,255,255,0.02)'}
+                onMouseLeave={e => e.currentTarget.style.background='transparent'}>
+                <div style={{ width:38, height:38, borderRadius:'50%', background:'linear-gradient(135deg, var(--teal), var(--gold))', display:'flex', alignItems:'center', justifyContent:'center', fontSize:13, fontWeight:700, color:'var(--navy)', flexShrink:0, overflow:'hidden' }}>
+                  {m.profiles?.avatar_url
+                    ? <img src={m.profiles.avatar_url} alt="" style={{ width:'100%', height:'100%', objectFit:'cover' }} />
+                    : m.profiles?.name?.slice(0,2).toUpperCase()}
+                </div>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontSize:14, fontWeight:600, color:'var(--text)' }}>{m.profiles?.name}</div>
+                  <div style={{ fontSize:11, color:'var(--text3)', marginTop:2, display:'flex', alignItems:'center', gap:6, flexWrap:'wrap' }}>
+                    <span>{friendSquad.length}/15 players</span>
+                    <span style={{ color:'var(--border2)' }}>·</span>
+                    <span style={{ color:'var(--red)' }}>₹{spent}Cr spent</span>
+                    <span style={{ color:'var(--border2)' }}>·</span>
+                    <span style={{ color:'var(--teal)' }}>₹{m.purse_remaining}Cr left</span>
+                  </div>
+                </div>
+                <div style={{ display:'flex', gap:4, flexShrink:0, flexWrap:'wrap', justifyContent:'flex-end' }}>
+                  {[
+                    { role:'Batsman', short:'BAT' },
+                    { role:'Bowler', short:'BWL' },
+                    { role:'All-Rounder', short:'AR' },
+                    { role:'WK-Batsman', short:'WK' },
+                  ].map(({ role, short }) => {
+                    const count = friendSquad.filter(s => s.players?.role === role).length
+                    if (!count) return null
+                    return (
+                      <div key={role} style={{ fontSize:10, fontWeight:700, padding:'2px 6px', borderRadius:5, background:ROLE_BG[role], color:ROLE_TEXT[role] }}>
+                        {count} {short}
+                      </div>
+                    )
+                  })}
+                </div>
+                <div style={{ fontSize:16, color:'var(--text3)', flexShrink:0, marginLeft:6 }}>
+                  {isOpen ? '▲' : '▼'}
+                </div>
+              </div>
+
+              {isOpen && (
+                <div style={{ borderTop:'1px solid var(--border)', padding:'14px 16px', background:'var(--navy3)' }}>
+                  {friendSquad.length === 0 ? (
+                    <div style={{ textAlign:'center', padding:'12px 0', color:'var(--text3)', fontSize:13 }}>No players yet</div>
+                  ) : (
+                    <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(150px,1fr))', gap:8 }}>
+                      {friendSquad.sort((a,b) => (b.bought_price||0) - (a.bought_price||0)).map(s => (
+                        <div key={s.id} style={{ background:'var(--navy2)', border:'1px solid var(--border)', borderRadius:10, overflow:'hidden' }}>
+                          <div style={{ padding:'10px 12px', display:'flex', alignItems:'center', gap:8 }}>
+                            <div style={{ width:34, height:34, borderRadius:8, flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Rajdhani', fontSize:12, fontWeight:700, background:ROLE_BG[s.players?.role], color:ROLE_TEXT[s.players?.role] }}>
+                              {s.players?.image_initials || s.players?.name?.slice(0,2)}
+                            </div>
+                            <div style={{ minWidth:0 }}>
+                              <div style={{ fontSize:12, fontWeight:600, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{s.players?.name}</div>
+                              <div style={{ fontSize:10, color:'var(--text3)', marginTop:1 }}>{s.players?.team}</div>
+                            </div>
+                          </div>
+                          <div style={{ background:'var(--navy4)', padding:'5px 12px', display:'flex', justifyContent:'space-between', alignItems:'center', borderTop:'1px solid var(--border)' }}>
+                            <span style={{ fontSize:9, color:'var(--text3)', textTransform:'uppercase' }}>
+                              {s.players?.role?.replace('All-Rounder','AR').replace('WK-Batsman','WK')}
+                            </span>
+                            <span style={{ fontFamily:'Rajdhani', fontSize:14, fontWeight:700, color:'var(--gold)' }}>₹{s.bought_price}Cr</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }
