@@ -2,472 +2,618 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { IPL_PLAYERS } from '../lib/players'
-import { calculateFantasyPoints } from '../lib/fantasyPoints'
+
+const ADMIN_EMAIL = 'sagarsaket120305@gmail.com'
 
 export default function Admin() {
   const { profile } = useAuth()
-  const [tab, setTab] = useState('league')
   const [league, setLeague] = useState(null)
-  const [member, setMember] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [activeTab, setActiveTab] = useState('league')
   const [msg, setMsg] = useState('')
-  const [leagueName, setLeagueName] = useState('Cricket Dugout')
-  const [auctionDate, setAuctionDate] = useState('')
-  const [team1, setTeam1] = useState('')
-  const [team2, setTeam2] = useState('')
-  const [matchDate, setMatchDate] = useState('')
-  const [venue, setVenue] = useState('')
-  const [matchNumber, setMatchNumber] = useState('')
-  const [matches, setMatches] = useState([])
-  const [players, setPlayers] = useState([])
-  const [selectedMatch, setSelectedMatch] = useState('')
-  const [selectedPlayer, setSelectedPlayer] = useState('')
-  const [releaseRequests, setReleaseRequests] = useState([])
-  const [leagueMembers, setLeagueMembers] = useState([])
-  const [perf, setPerf] = useState({
-    runs:0, balls_faced:0, fours:0, sixes:0, wickets:0,
-    catches:0, stumpings:0, run_outs:0, maidens:0,
-    economy:0, overs:0, is_duck:false, is_lbw:false, is_bowled:false
-  })
+  const [msgType, setMsgType] = useState('success')
 
   useEffect(() => { if (profile) load() }, [profile])
 
   async function load() {
-    const { data: mem } = await supabase
-      .from('league_members').select('*, leagues(*)')
+    setLoading(true)
+    const { data } = await supabase.from('league_members').select('*, leagues(*)')
       .eq('user_id', profile.id).single()
-    if (mem) { setLeague(mem.leagues); setMember(mem) }
-
-    const { data: ms } = await supabase
-      .from('matches').select('*')
-      .order('match_date', { ascending: false })
-    setMatches(ms || [])
-
-    const { data: ps } = await supabase
-      .from('players').select('id, name, team, role')
-      .order('name')
-    setPlayers(ps || [])
-
-    const { data: releases } = await supabase
-      .from('release_requests')
-      .select('*, players(name, team, base_price), profiles(name)')
-      .eq('status', 'pending')
-      .order('requested_at', { ascending: false })
-    setReleaseRequests(releases || [])
-
-    if (mem) {
-      const { data: members } = await supabase
-        .from('league_members')
-        .select('*, profiles(*)')
-        .eq('league_id', mem.league_id)
-      setLeagueMembers(members || [])
-    }
-
+    if (data) setLeague(data.leagues)
     setLoading(false)
   }
 
-  function flash(m) { setMsg(m); setTimeout(() => setMsg(''), 5000) }
-
-  async function createLeague() {
-    const { data, error } = await supabase.from('leagues').insert({
-      name: leagueName, created_by: profile.id,
-      purse_limit: 120, auction_date: auctionDate || null
-    }).select().single()
-    if (error) { flash('Error: ' + error.message); return }
-    await supabase.from('league_members').insert({
-      league_id: data.id, user_id: profile.id,
-      purse_remaining: 120, is_admin: true
-    })
-    flash('League created! Code: ' + data.invite_code)
-    load()
+  function showMsg(text, type = 'success') {
+    setMsg(text); setMsgType(type)
+    setTimeout(() => setMsg(''), 4000)
   }
 
-  async function updateAuctionDate() {
-    await supabase.from('leagues').update({ auction_date: auctionDate }).eq('id', league.id)
-    flash('Auction date updated!')
-    load()
-  }
-
-  async function seedPlayers() {
-    const { error } = await supabase.from('players').insert(IPL_PLAYERS)
-    if (error) flash('Error: ' + error.message)
-    else { flash(`Seeded ${IPL_PLAYERS.length} IPL players!`); load() }
-  }
-
-  async function addMatch() {
-    if (!team1 || !team2) { flash('Enter both teams!'); return }
-    await supabase.from('matches').insert({
-      team1, team2, match_date: matchDate || null,
-      venue, match_number: matchNumber || null, status: 'upcoming'
-    })
-    flash('Match added!')
-    setTeam1(''); setTeam2(''); setMatchDate(''); setVenue(''); setMatchNumber('')
-    load()
-  }
-
-  async function updateMatchStatus(id, status) {
-    await supabase.from('matches').update({ status }).eq('id', id)
-    flash('Match status updated!')
-    load()
-  }
-
-  async function submitPerformance() {
-    if (!selectedMatch || !selectedPlayer) { flash('Select match and player!'); return }
-    const { points, breakdown } = calculateFantasyPoints({ ...perf })
-    const { error } = await supabase.from('performances').upsert({
-      match_id: selectedMatch, player_id: selectedPlayer,
-      ...perf, fantasy_points: points
-    }, { onConflict: 'match_id,player_id' })
-    if (error) { flash('Error: ' + error.message); return }
-    if (league) {
-      const { data: sq } = await supabase.from('squad').select('user_id')
-        .eq('player_id', selectedPlayer).eq('league_id', league.id).maybeSingle()
-      if (sq) {
-        const { data: ex } = await supabase.from('match_points').select('*')
-          .eq('match_id', selectedMatch).eq('user_id', sq.user_id)
-          .eq('league_id', league.id).maybeSingle()
-        if (ex) await supabase.from('match_points')
-          .update({ total_points: ex.total_points + points }).eq('id', ex.id)
-        else await supabase.from('match_points').insert({
-          match_id: selectedMatch, user_id: sq.user_id,
-          league_id: league.id, total_points: points
-        })
-      }
-    }
-    flash(`Saved! ${points} pts — ${breakdown.map(b => `${b.label}: ${b.pts>0?'+':''}${b.pts}`).join(', ')}`)
-    setPerf({ runs:0, balls_faced:0, fours:0, sixes:0, wickets:0, catches:0, stumpings:0, run_outs:0, maidens:0, economy:0, overs:0, is_duck:false, is_lbw:false, is_bowled:false })
-  }
-
-  async function handleRelease(request, decision) {
-    if (decision === 'approved') {
-      const { data: squadEntry } = await supabase
-        .from('squad').select('bought_price')
-        .eq('player_id', request.player_id)
-        .eq('league_id', request.league_id)
-        .single()
-      if (!squadEntry) { flash('Error: Squad entry not found!'); return }
-      const { error: deleteError } = await supabase
-        .from('squad').delete()
-        .eq('player_id', request.player_id)
-        .eq('league_id', request.league_id)
-        .eq('user_id', request.user_id)
-      if (deleteError) { flash('Delete failed: ' + deleteError.message); return }
-      const { data: memData } = await supabase
-        .from('league_members').select('purse_remaining')
-        .eq('league_id', request.league_id)
-        .eq('user_id', request.user_id)
-        .single()
-      if (memData) {
-        const newPurse = Math.min(120, memData.purse_remaining + squadEntry.bought_price)
-        await supabase.from('league_members')
-          .update({ purse_remaining: newPurse })
-          .eq('league_id', request.league_id)
-          .eq('user_id', request.user_id)
-      }
-      flash(`✅ ${request.players?.name} released! ₹${squadEntry.bought_price} Cr refunded to ${request.profiles?.name}.`)
-    } else {
-      flash(`❌ Rejected — ${request.players?.name} stays in squad.`)
-    }
-    await supabase.from('release_requests')
-      .update({ status: decision, resolved_at: new Date().toISOString() })
-      .eq('id', request.id)
-    load()
-  }
-
-  async function removeUser(userId, userName) {
-    if (!confirm(`Remove ${userName} from the league? This will also delete their squad and bids.`)) return
-    // Delete their squad
-    await supabase.from('squad').delete()
-      .eq('user_id', userId).eq('league_id', league.id)
-    // Delete their bids
-    await supabase.from('auction_bids').delete()
-      .eq('bidder_id', userId).eq('league_id', league.id)
-    // Delete their match points
-    await supabase.from('match_points').delete()
-      .eq('user_id', userId).eq('league_id', league.id)
-    // Delete their release requests
-    await supabase.from('release_requests').delete()
-      .eq('user_id', userId).eq('league_id', league.id)
-    // Remove from league
-    const { error } = await supabase.from('league_members').delete()
-      .eq('user_id', userId).eq('league_id', league.id)
-    if (error) flash('Error removing user: ' + error.message)
-    else flash(`✅ ${userName} removed from league.`)
-    load()
-  }
-
-  const TABS = ['league', 'players', 'matches', 'performances', 'releases', 'members']
-
-  if (loading) return (
-    <div style={{ display:'flex',alignItems:'center',justifyContent:'center',height:300 }}>
-      <div style={{ fontFamily:'Rajdhani',fontSize:20,color:'var(--gold)' }}>Loading...</div>
+  if (profile?.email !== ADMIN_EMAIL) return (
+    <div style={{ padding:48, textAlign:'center', color:'var(--text3)' }}>
+      <div style={{ fontSize:48, marginBottom:12 }}>🔒</div>
+      <div style={{ fontFamily:'Rajdhani', fontSize:22, fontWeight:700 }}>Admin Only</div>
     </div>
   )
 
+  if (loading) return (
+    <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'60vh', flexDirection:'column', gap:12 }}>
+      <div style={{ width:40, height:40, border:'3px solid var(--border)', borderTop:'3px solid var(--gold)', borderRadius:'50%', animation:'spin 1s linear infinite' }} />
+      <div style={{ color:'var(--text2)', fontSize:14 }}>Loading admin panel...</div>
+    </div>
+  )
+
+  const tabs = [
+    { key:'league', label:'🏆 League' },
+    { key:'players', label:'🏏 Players' },
+    { key:'members', label:'👥 Members' },
+    { key:'releases', label:'🔓 Releases' },
+    { key:'trades', label:'🔄 Trades' },
+  ]
+
   return (
     <div>
-      <div className="fade-in" style={{ marginBottom:24 }}>
-        <h1 style={{ fontFamily:'Rajdhani',fontSize:32,fontWeight:700 }}>Admin Panel</h1>
-        <div style={{ color:'var(--muted)',fontSize:14,marginTop:2 }}>Manage league, players, matches, performances, releases and members</div>
+      {/* Header */}
+      <div className="fade-up" style={{ marginBottom:24 }}>
+        <div style={{ fontSize:11, color:'var(--text3)', textTransform:'uppercase', letterSpacing:'1px', fontWeight:600, marginBottom:4 }}>Admin Panel</div>
+        <h1 style={{ fontFamily:'Rajdhani', fontSize:'clamp(24px,5vw,36px)', fontWeight:700, marginBottom:4 }}>League Management</h1>
+        <div style={{ color:'var(--text2)', fontSize:13 }}>Manage your IPL Fantasy league</div>
       </div>
 
+      {/* Message */}
       {msg && (
-        <div className="fade-in" style={{ padding:'12px 16px',marginBottom:16,borderRadius:10,fontWeight:500,
-          background:msg.startsWith('Error')||msg.startsWith('Delete')||msg.startsWith('Purse')?'rgba(232,69,69,0.1)':'rgba(0,201,167,0.1)',
-          border:`1px solid ${msg.startsWith('Error')||msg.startsWith('Delete')||msg.startsWith('Purse')?'rgba(232,69,69,0.3)':'rgba(0,201,167,0.3)'}`,
-          color:msg.startsWith('Error')||msg.startsWith('Delete')||msg.startsWith('Purse')?'var(--red)':'var(--teal)' }}>
+        <div style={{ padding:'10px 14px', background:msgType==='error'?'var(--red2)':'var(--teal2)', border:`1px solid ${msgType==='error'?'rgba(255,71,87,0.3)':'rgba(0,212,170,0.3)'}`, borderRadius:10, marginBottom:14, color:msgType==='error'?'var(--red)':'var(--teal)', fontSize:13, fontWeight:500 }}>
           {msg}
         </div>
       )}
 
       {/* Tabs */}
-      <div style={{ display:'flex',gap:4,background:'var(--navy2)',borderRadius:12,padding:4,marginBottom:24,width:'fit-content',flexWrap:'wrap' }}>
-        {TABS.map(t => (
-          <button key={t} onClick={() => setTab(t)} style={{
-            padding:'8px 18px',borderRadius:9,fontSize:13,fontWeight:500,
-            border:'none',cursor:'pointer',transition:'all 0.15s',
-            textTransform:'capitalize',position:'relative',
-            background:tab===t?'var(--gold)':'transparent',
-            color:tab===t?'var(--navy)':'var(--text2)'
-          }}>
-            {t}
-            {t==='releases' && releaseRequests.length > 0 && (
-              <span style={{ position:'absolute',top:-4,right:-4,background:'var(--red)',color:'#fff',fontSize:10,fontWeight:700,width:16,height:16,borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center' }}>
-                {releaseRequests.length}
-              </span>
-            )}
-          </button>
+      <div style={{ display:'flex', gap:6, marginBottom:20, flexWrap:'wrap' }}>
+        {tabs.map(t => (
+          <button key={t.key} onClick={() => setActiveTab(t.key)} style={{
+            padding:'8px 16px', borderRadius:10, fontSize:13, fontWeight:600,
+            border:`1px solid ${activeTab===t.key?'rgba(240,165,0,0.4)':'var(--border)'}`,
+            cursor:'pointer', transition:'all 0.15s',
+            background:activeTab===t.key?'rgba(240,165,0,0.1)':'var(--navy2)',
+            color:activeTab===t.key?'var(--gold)':'var(--text2)',
+          }}>{t.label}</button>
         ))}
       </div>
 
-      {/* LEAGUE TAB */}
-      {tab === 'league' && (
-        <div className="fade-in" style={{ maxWidth:520 }}>
-          {!league ? (
-            <div className="card" style={{ padding:24 }}>
-              <div style={{ fontFamily:'Rajdhani',fontSize:20,fontWeight:600,marginBottom:16 }}>Create Your League</div>
-              <input className="input" placeholder="League name" value={leagueName} onChange={e => setLeagueName(e.target.value)} style={{ marginBottom:10 }} />
-              <input className="input" type="datetime-local" value={auctionDate} onChange={e => setAuctionDate(e.target.value)} style={{ marginBottom:16 }} />
-              <button className="btn btn-primary" style={{ width:'100%' }} onClick={createLeague}>Create League</button>
-            </div>
-          ) : (
+      {/* Tab content */}
+      <div style={{ background:'var(--navy2)', border:'1px solid var(--border)', borderRadius:16, padding:20 }}>
+        {activeTab === 'league' && <LeagueTab profile={profile} league={league} setLeague={setLeague} showMsg={showMsg} />}
+        {activeTab === 'players' && <PlayersTab league={league} showMsg={showMsg} />}
+        {activeTab === 'members' && <MembersTab league={league} showMsg={showMsg} />}
+        {activeTab === 'releases' && <ReleasesTab league={league} showMsg={showMsg} />}
+        {activeTab === 'trades' && <AdminTrades league={league} showMsg={showMsg} />}
+      </div>
+    </div>
+  )
+}
+
+// ==================== LEAGUE TAB ====================
+function LeagueTab({ profile, league, setLeague, showMsg }) {
+  const [name, setName] = useState('')
+  const [creating, setCreating] = useState(false)
+
+  async function createLeague() {
+    if (!name.trim()) return
+    setCreating(true)
+    const invite_code = Math.random().toString(36).substring(2, 10).toUpperCase()
+    const { data: lg, error } = await supabase.from('leagues').insert({
+      name: name.trim(), invite_code: invite_code.toLowerCase(), purse_limit: 120, created_by: profile.id
+    }).select().single()
+    if (error) { showMsg('Error: ' + error.message, 'error'); setCreating(false); return }
+    await supabase.from('league_members').insert({
+      league_id: lg.id, user_id: profile.id, purse_remaining: 120, is_admin: true
+    })
+    setLeague(lg)
+    showMsg('League created! Share the invite code with friends.')
+    setCreating(false)
+  }
+
+  async function resetPurses() {
+    if (!league) return
+    if (!confirm('Reset ALL purses to ₹120 Cr minus spent? This recalculates based on current squads.')) return
+    await supabase.rpc('recalculate_purses', { league_id_input: league.id }).catch(async () => {
+      // Fallback manual update
+      const { data: members } = await supabase.from('league_members').select('user_id')
+        .eq('league_id', league.id)
+      for (const m of members || []) {
+        const { data: sq } = await supabase.from('squad').select('bought_price')
+          .eq('league_id', league.id).eq('user_id', m.user_id)
+        const spent = sq?.reduce((a, s) => a + s.bought_price, 0) || 0
+        await supabase.from('league_members').update({ purse_remaining: 120 - spent })
+          .eq('league_id', league.id).eq('user_id', m.user_id)
+      }
+    })
+    showMsg('All purses recalculated!')
+  }
+
+  if (!league) return (
+    <div>
+      <h3 style={{ fontFamily:'Rajdhani', fontSize:20, fontWeight:700, marginBottom:16 }}>Create a League</h3>
+      <input className="input" placeholder="League name e.g. IPL Fantasy 2026" value={name} onChange={e => setName(e.target.value)} style={{ marginBottom:12 }} />
+      <button className="btn btn-primary" onClick={createLeague} disabled={creating} style={{ width:'100%', padding:14 }}>
+        {creating ? 'Creating...' : '🏆 Create League'}
+      </button>
+    </div>
+  )
+
+  return (
+    <div>
+      <h3 style={{ fontFamily:'Rajdhani', fontSize:20, fontWeight:700, marginBottom:16 }}>League Info</h3>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(200px,1fr))', gap:12, marginBottom:20 }}>
+        {[
+          { label:'League Name', value:league.name },
+          { label:'Invite Code', value:league.invite_code?.toUpperCase(), color:'var(--gold)' },
+          { label:'Purse Limit', value:'₹120 Cr each' },
+        ].map((item, i) => (
+          <div key={i} style={{ padding:'12px 16px', background:'var(--navy3)', borderRadius:10, border:'1px solid var(--border)' }}>
+            <div style={{ fontSize:10, color:'var(--text3)', textTransform:'uppercase', letterSpacing:'0.8px', marginBottom:4 }}>{item.label}</div>
+            <div style={{ fontFamily:'Rajdhani', fontSize:18, fontWeight:700, color:item.color||'var(--text)' }}>{item.value}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>
+        <button className="btn btn-ghost" onClick={() => { navigator.clipboard.writeText(league.invite_code); showMsg('Invite code copied!') }}>
+          📋 Copy Invite Code
+        </button>
+        <button className="btn btn-danger" onClick={resetPurses}>
+          🔄 Recalculate All Purses
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ==================== PLAYERS TAB ====================
+function PlayersTab({ league, showMsg }) {
+  const [players, setPlayers] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [seeding, setSeeding] = useState(false)
+  const [search, setSearch] = useState('')
+  const [showAdd, setShowAdd] = useState(false)
+  const [newPlayer, setNewPlayer] = useState({ name:'', team:'MI', role:'Batsman', base_price:2 })
+  const TEAMS = ['MI','CSK','RCB','KKR','RR','DC','PBKS','SRH','GT','LSG']
+  const ROLES = ['Batsman','Bowler','All-Rounder','WK-Batsman']
+
+  useEffect(() => { loadPlayers() }, [])
+
+  async function loadPlayers() {
+    const { data } = await supabase.from('players').select('*').order('team').then(r => r)
+    setPlayers(data || [])
+    setLoading(false)
+  }
+
+  async function seedPlayers() {
+    if (!confirm(`Load all ${IPL_PLAYERS.length} IPL 2026 players? This will skip duplicates.`)) return
+    setSeeding(true)
+    let added = 0, skipped = 0
+    for (const p of IPL_PLAYERS) {
+      const { error } = await supabase.from('players').insert({
+        name: p.name, team: p.team, role: p.role, base_price: p.base_price,
+        batting_avg: p.batting_avg, strike_rate: p.strike_rate, economy: p.economy,
+        matches: p.matches, runs: p.runs, wickets: p.wickets, image_initials: p.image_initials
+      })
+      if (error) skipped++
+      else added++
+    }
+    showMsg(`✅ Done! ${added} players added, ${skipped} skipped (duplicates).`)
+    loadPlayers()
+    setSeeding(false)
+  }
+
+  async function deletePlayer(id) {
+    if (!confirm('Delete this player?')) return
+    const { error } = await supabase.from('players').delete().eq('id', id)
+    if (error) showMsg('Cannot delete — player may be in a squad or auction.', 'error')
+    else { showMsg('Player deleted.'); loadPlayers() }
+  }
+
+  async function addPlayer() {
+    if (!newPlayer.name.trim()) { showMsg('Enter player name', 'error'); return }
+    const { error } = await supabase.from('players').insert({
+      name: newPlayer.name.trim(), team: newPlayer.team,
+      role: newPlayer.role, base_price: parseInt(newPlayer.base_price) || 2,
+      image_initials: newPlayer.name.trim().split(' ').map(w => w[0]).join('').slice(0,3).toUpperCase()
+    })
+    if (error) showMsg('Error: ' + error.message, 'error')
+    else { showMsg('Player added!'); setShowAdd(false); setNewPlayer({ name:'', team:'MI', role:'Batsman', base_price:2 }); loadPlayers() }
+  }
+
+  const filtered = players.filter(p =>
+    !search || p.name.toLowerCase().includes(search.toLowerCase()) || p.team.toLowerCase().includes(search.toLowerCase())
+  )
+
+  return (
+    <div>
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16, flexWrap:'wrap', gap:10 }}>
+        <h3 style={{ fontFamily:'Rajdhani', fontSize:20, fontWeight:700 }}>
+          Players <span style={{ color:'var(--text3)', fontWeight:400, fontSize:15 }}>({players.length})</span>
+        </h3>
+        <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+          <button className="btn btn-ghost" onClick={() => setShowAdd(!showAdd)} style={{ fontSize:13 }}>
+            {showAdd ? '✕ Cancel' : '+ Add Player'}
+          </button>
+          <button className="btn btn-primary" onClick={seedPlayers} disabled={seeding} style={{ fontSize:13 }}>
+            {seeding ? '⟳ Loading...' : '🏏 Load All IPL Players'}
+          </button>
+        </div>
+      </div>
+
+      {/* Add player form */}
+      {showAdd && (
+        <div style={{ background:'var(--navy3)', borderRadius:12, padding:16, marginBottom:16, border:'1px solid var(--border)' }}>
+          <h4 style={{ fontFamily:'Rajdhani', fontSize:16, fontWeight:700, marginBottom:12 }}>Add New Player</h4>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(160px,1fr))', gap:10, marginBottom:12 }}>
             <div>
-              <div className="card" style={{ padding:24,marginBottom:16 }}>
-                <div style={{ fontFamily:'Rajdhani',fontSize:20,fontWeight:600,marginBottom:16 }}>League Settings</div>
-                <div style={{ marginBottom:16 }}>
-                  <div style={{ fontSize:12,color:'var(--muted)',marginBottom:4 }}>League Name</div>
-                  <div style={{ fontFamily:'Rajdhani',fontSize:20,fontWeight:700,color:'var(--gold)' }}>{league.name}</div>
-                </div>
-                <div style={{ marginBottom:16 }}>
-                  <div style={{ fontSize:12,color:'var(--muted)',marginBottom:4 }}>Invite Code</div>
-                  <div style={{ fontFamily:'Rajdhani',fontSize:26,fontWeight:700,letterSpacing:2 }}>{league.invite_code?.toUpperCase()}</div>
-                </div>
-                <div>
-                  <div style={{ fontSize:12,color:'var(--muted)',marginBottom:6 }}>Auction Date & Time</div>
-                  <div style={{ display:'flex',gap:10 }}>
-                    <input className="input" type="datetime-local" value={auctionDate} onChange={e => setAuctionDate(e.target.value)} />
-                    <button className="btn btn-primary" onClick={updateAuctionDate}>Save</button>
-                  </div>
-                </div>
-              </div>
-              <div className="card" style={{ padding:24 }}>
-                <div style={{ fontFamily:'Rajdhani',fontSize:18,fontWeight:600,marginBottom:4 }}>Purse Per Friend</div>
-                <div style={{ fontFamily:'Rajdhani',fontSize:32,fontWeight:700,color:'var(--gold)' }}>₹120 Crore</div>
-                <div style={{ fontSize:12,color:'var(--muted)',marginTop:4 }}>Same as IPL 2025 official limit</div>
-              </div>
+              <div style={{ fontSize:11, color:'var(--text3)', marginBottom:4 }}>Name *</div>
+              <input className="input" placeholder="Player name" value={newPlayer.name}
+                onChange={e => setNewPlayer({...newPlayer, name:e.target.value})} style={{ padding:'7px 10px', fontSize:13 }} />
             </div>
-          )}
+            <div>
+              <div style={{ fontSize:11, color:'var(--text3)', marginBottom:4 }}>Team</div>
+              <select className="input" value={newPlayer.team} onChange={e => setNewPlayer({...newPlayer, team:e.target.value})}
+                style={{ padding:'7px 10px', fontSize:13 }}>
+                {TEAMS.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+            <div>
+              <div style={{ fontSize:11, color:'var(--text3)', marginBottom:4 }}>Role</div>
+              <select className="input" value={newPlayer.role} onChange={e => setNewPlayer({...newPlayer, role:e.target.value})}
+                style={{ padding:'7px 10px', fontSize:13 }}>
+                {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </div>
+            <div>
+              <div style={{ fontSize:11, color:'var(--text3)', marginBottom:4 }}>Base Price (Cr)</div>
+              <input className="input" type="number" min={1} max={20} value={newPlayer.base_price}
+                onChange={e => setNewPlayer({...newPlayer, base_price:e.target.value})} style={{ padding:'7px 10px', fontSize:13 }} />
+            </div>
+          </div>
+          <button className="btn btn-primary" onClick={addPlayer} style={{ fontSize:13, padding:'8px 20px' }}>Add Player</button>
         </div>
       )}
 
-      {/* PLAYERS TAB */}
-      {tab === 'players' && (
-        <div className="fade-in" style={{ maxWidth:520 }}>
-          <div className="card" style={{ padding:24 }}>
-            <div style={{ fontFamily:'Rajdhani',fontSize:20,fontWeight:600,marginBottom:8 }}>Seed IPL Players</div>
-            <div style={{ fontSize:14,color:'var(--text2)',marginBottom:16 }}>Load all {IPL_PLAYERS.length} IPL players. Only needed once!</div>
-            <button className="btn btn-primary" style={{ width:'100%' }} onClick={seedPlayers}>🏏 Load All IPL Players ({IPL_PLAYERS.length})</button>
-          </div>
-        </div>
-      )}
+      {/* Search */}
+      <input className="input" placeholder="Search players..." value={search} onChange={e => setSearch(e.target.value)} style={{ marginBottom:14 }} />
 
-      {/* MATCHES TAB */}
-      {tab === 'matches' && (
-        <div className="fade-in">
-          <div className="card" style={{ padding:24,maxWidth:520,marginBottom:20 }}>
-            <div style={{ fontFamily:'Rajdhani',fontSize:20,fontWeight:600,marginBottom:16 }}>Add New Match</div>
-            <div style={{ display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10 }}>
-              <input className="input" placeholder="Team 1 (e.g. MI)" value={team1} onChange={e => setTeam1(e.target.value.toUpperCase())} />
-              <input className="input" placeholder="Team 2 (e.g. CSK)" value={team2} onChange={e => setTeam2(e.target.value.toUpperCase())} />
-            </div>
-            <input className="input" type="datetime-local" value={matchDate} onChange={e => setMatchDate(e.target.value)} style={{ marginBottom:10 }} />
-            <input className="input" placeholder="Venue (optional)" value={venue} onChange={e => setVenue(e.target.value)} style={{ marginBottom:10 }} />
-            <input className="input" placeholder="Match number (optional)" type="number" value={matchNumber} onChange={e => setMatchNumber(e.target.value)} style={{ marginBottom:16 }} />
-            <button className="btn btn-primary" style={{ width:'100%' }} onClick={addMatch}>Add Match</button>
-          </div>
-          <div style={{ fontFamily:'Rajdhani',fontSize:18,fontWeight:600,marginBottom:12 }}>All Matches ({matches.length})</div>
-          <div style={{ display:'flex',flexDirection:'column',gap:8,maxWidth:600 }}>
-            {matches.map(m => (
-              <div key={m.id} className="card" style={{ padding:'12px 16px',display:'flex',alignItems:'center',justifyContent:'space-between' }}>
-                <div>
-                  <div style={{ fontFamily:'Rajdhani',fontSize:16,fontWeight:700 }}>{m.team1} vs {m.team2}</div>
-                  <div style={{ fontSize:12,color:'var(--muted)' }}>{m.match_date ? new Date(m.match_date).toLocaleString('en-IN') : 'Date TBD'}</div>
-                </div>
-                <div style={{ display:'flex',gap:6 }}>
-                  {['upcoming','live','completed'].map(s => (
-                    <button key={s} onClick={() => updateMatchStatus(m.id, s)} style={{
-                      padding:'4px 10px',borderRadius:6,fontSize:11,fontWeight:600,border:'none',cursor:'pointer',
-                      background:m.status===s?(s==='live'?'var(--red)':s==='completed'?'var(--teal)':'var(--navy4)'):'var(--navy3)',
-                      color:m.status===s?(s==='live'?'#fff':s==='completed'?'var(--navy)':'var(--text)'):'var(--muted)'
-                    }}>{s}</button>
-                  ))}
-                </div>
+      {loading ? (
+        <div style={{ padding:20, textAlign:'center', color:'var(--text3)' }}>Loading...</div>
+      ) : (
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(200px,1fr))', gap:8, maxHeight:500, overflowY:'auto' }} className="no-scroll">
+          {filtered.map(p => (
+            <div key={p.id} style={{ background:'var(--navy3)', border:'1px solid var(--border)', borderRadius:10, padding:'10px 12px', display:'flex', alignItems:'center', justifyContent:'space-between', gap:8 }}>
+              <div style={{ minWidth:0 }}>
+                <div style={{ fontSize:12, fontWeight:600, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{p.name}</div>
+                <div style={{ fontSize:10, color:'var(--text3)', marginTop:2 }}>{p.team} · {p.role?.replace('All-Rounder','AR').replace('WK-Batsman','WK')} · ₹{p.base_price}Cr</div>
               </div>
-            ))}
-          </div>
+              <button onClick={() => deletePlayer(p.id)}
+                style={{ fontSize:11, padding:'3px 8px', borderRadius:6, border:'1px solid rgba(255,71,87,0.25)', background:'var(--red2)', color:'var(--red)', cursor:'pointer', flexShrink:0 }}>
+                ✕
+              </button>
+            </div>
+          ))}
         </div>
       )}
+    </div>
+  )
+}
 
-      {/* PERFORMANCES TAB */}
-      {tab === 'performances' && (
-        <div className="fade-in" style={{ maxWidth:600 }}>
-          <div className="card" style={{ padding:24 }}>
-            <div style={{ fontFamily:'Rajdhani',fontSize:20,fontWeight:600,marginBottom:16 }}>Enter Player Performance</div>
-            <div style={{ display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:14 }}>
-              <div>
-                <div style={{ fontSize:12,color:'var(--muted)',marginBottom:4 }}>Match</div>
-                <select className="input" value={selectedMatch} onChange={e => setSelectedMatch(e.target.value)}>
-                  <option value="">Select match...</option>
-                  {matches.map(m => <option key={m.id} value={m.id}>{m.team1} vs {m.team2} · {m.match_date ? new Date(m.match_date).toLocaleDateString() : 'TBD'}</option>)}
-                </select>
+// ==================== MEMBERS TAB ====================
+function MembersTab({ league, showMsg }) {
+  const [members, setMembers] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => { if (league) loadMembers() }, [league])
+
+  async function loadMembers() {
+    const { data } = await supabase.from('league_members').select('*, profiles(*)')
+      .eq('league_id', league.id)
+    setMembers(data || [])
+    setLoading(false)
+  }
+
+  async function removeMember(userId, name) {
+    if (!confirm(`Remove ${name} from the league? Their squad will also be deleted.`)) return
+    await supabase.from('squad').delete().eq('league_id', league.id).eq('user_id', userId)
+    await supabase.from('auction_bids').delete().eq('league_id', league.id).eq('bidder_id', userId)
+    await supabase.from('match_points').delete().eq('league_id', league.id).eq('user_id', userId)
+    await supabase.from('league_members').delete().eq('league_id', league.id).eq('user_id', userId)
+    showMsg(`${name} removed from league.`)
+    loadMembers()
+  }
+
+  async function resetMemberPurse(userId, name) {
+    if (!confirm(`Reset ${name}'s purse based on their current squad?`)) return
+    const { data: sq } = await supabase.from('squad').select('bought_price')
+      .eq('league_id', league.id).eq('user_id', userId)
+    const spent = sq?.reduce((a, s) => a + s.bought_price, 0) || 0
+    await supabase.from('league_members').update({ purse_remaining: 120 - spent })
+      .eq('league_id', league.id).eq('user_id', userId)
+    showMsg(`${name}'s purse reset to ₹${120 - spent}Cr!`)
+    loadMembers()
+  }
+
+  if (!league) return <div style={{ color:'var(--text3)', fontSize:13 }}>Create a league first.</div>
+  if (loading) return <div style={{ padding:20, color:'var(--text3)' }}>Loading...</div>
+
+  return (
+    <div>
+      <h3 style={{ fontFamily:'Rajdhani', fontSize:20, fontWeight:700, marginBottom:16 }}>
+        Members <span style={{ color:'var(--text3)', fontWeight:400, fontSize:15 }}>({members.length})</span>
+      </h3>
+      <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+        {members.map(m => (
+          <div key={m.id} style={{ background:'var(--navy3)', border:'1px solid var(--border)', borderRadius:12, padding:'12px 16px', display:'flex', alignItems:'center', gap:12, flexWrap:'wrap' }}>
+            <div style={{ width:36, height:36, borderRadius:'50%', background:'linear-gradient(135deg, var(--teal), var(--gold))', display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:700, color:'var(--navy)', overflow:'hidden', flexShrink:0 }}>
+              {m.profiles?.avatar_url ? <img src={m.profiles.avatar_url} alt="" style={{ width:'100%', height:'100%', objectFit:'cover' }} /> : m.profiles?.name?.slice(0,2).toUpperCase()}
+            </div>
+            <div style={{ flex:1, minWidth:0 }}>
+              <div style={{ fontSize:13, fontWeight:600, display:'flex', alignItems:'center', gap:6 }}>
+                {m.profiles?.name}
+                {m.is_admin && <span style={{ fontSize:9, background:'rgba(240,165,0,0.2)', color:'var(--gold)', borderRadius:4, padding:'1px 5px', fontWeight:700 }}>ADMIN</span>}
               </div>
-              <div>
-                <div style={{ fontSize:12,color:'var(--muted)',marginBottom:4 }}>Player</div>
-                <select className="input" value={selectedPlayer} onChange={e => setSelectedPlayer(e.target.value)}>
-                  <option value="">Select player...</option>
-                  {players.map(p => <option key={p.id} value={p.id}>{p.name} ({p.team})</option>)}
-                </select>
+              <div style={{ fontSize:11, color:'var(--text3)', marginTop:1 }}>{m.profiles?.email}</div>
+            </div>
+            <div style={{ fontFamily:'Rajdhani', fontSize:16, fontWeight:700, color: m.purse_remaining < 20 ? 'var(--red)' : m.purse_remaining < 40 ? 'var(--gold)' : 'var(--teal)' }}>
+              ₹{m.purse_remaining}Cr
+            </div>
+            <div style={{ display:'flex', gap:6 }}>
+              <button onClick={() => resetMemberPurse(m.user_id, m.profiles?.name)}
+                style={{ fontSize:11, padding:'4px 10px', borderRadius:7, border:'1px solid rgba(0,212,170,0.25)', background:'var(--teal2)', color:'var(--teal)', cursor:'pointer', fontWeight:600 }}>
+                Reset Purse
+              </button>
+              {!m.is_admin && (
+                <button onClick={() => removeMember(m.user_id, m.profiles?.name)}
+                  style={{ fontSize:11, padding:'4px 10px', borderRadius:7, border:'1px solid rgba(255,71,87,0.25)', background:'var(--red2)', color:'var(--red)', cursor:'pointer', fontWeight:600 }}>
+                  Remove
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ==================== RELEASES TAB ====================
+function ReleasesTab({ league, showMsg }) {
+  const [releases, setReleases] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => { if (league) loadReleases() }, [league])
+
+  async function loadReleases() {
+    const { data } = await supabase.from('release_requests')
+      .select('*, players(*), profiles(*)')
+      .eq('league_id', league.id)
+      .eq('status', 'pending')
+      .order('requested_at', { ascending: false })
+    setReleases(data || [])
+    setLoading(false)
+  }
+
+  async function approveRelease(r) {
+    if (!confirm(`Approve release of ${r.players?.name}? ₹${r.bought_price||0}Cr will be refunded.`)) return
+    // Get bought price from squad
+    const { data: sq } = await supabase.from('squad').select('bought_price')
+      .eq('player_id', r.player_id).eq('league_id', league.id).eq('user_id', r.user_id).single()
+    const price = sq?.bought_price || 0
+    // Delete from squad
+    await supabase.from('squad').delete().eq('player_id', r.player_id).eq('league_id', league.id).eq('user_id', r.user_id)
+    // Refund purse
+    const { data: mem } = await supabase.from('league_members').select('purse_remaining')
+      .eq('league_id', league.id).eq('user_id', r.user_id).single()
+    if (mem) {
+      await supabase.from('league_members').update({ purse_remaining: mem.purse_remaining + price })
+        .eq('league_id', league.id).eq('user_id', r.user_id)
+    }
+    await supabase.from('release_requests').update({ status: 'approved', resolved_at: new Date() }).eq('id', r.id)
+    showMsg(`✅ ${r.players?.name} released! ₹${price}Cr refunded.`)
+    loadReleases()
+  }
+
+  async function rejectRelease(r) {
+    if (!confirm(`Reject release of ${r.players?.name}?`)) return
+    await supabase.from('release_requests').update({ status: 'rejected', resolved_at: new Date() }).eq('id', r.id)
+    showMsg(`Release rejected.`)
+    loadReleases()
+  }
+
+  if (!league) return <div style={{ color:'var(--text3)', fontSize:13 }}>Create a league first.</div>
+  if (loading) return <div style={{ padding:20, color:'var(--text3)' }}>Loading...</div>
+
+  return (
+    <div>
+      <h3 style={{ fontFamily:'Rajdhani', fontSize:20, fontWeight:700, marginBottom:16 }}>
+        Release Requests <span style={{ color:'var(--text3)', fontWeight:400, fontSize:15 }}>({releases.length})</span>
+      </h3>
+      {releases.length === 0 ? (
+        <div style={{ padding:32, textAlign:'center', color:'var(--text3)', background:'var(--navy3)', borderRadius:12, fontSize:13 }}>
+          No pending release requests
+        </div>
+      ) : releases.map(r => (
+        <div key={r.id} style={{ background:'var(--navy3)', border:'1px solid var(--border)', borderRadius:12, padding:16, marginBottom:10 }}>
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:12, flexWrap:'wrap', gap:8 }}>
+            <div>
+              <div style={{ fontSize:14, fontWeight:600 }}>{r.players?.name}</div>
+              <div style={{ fontSize:11, color:'var(--text3)', marginTop:2 }}>
+                {r.players?.team} · {r.players?.role} · Requested by {r.profiles?.name?.split(' ')[0]}
               </div>
             </div>
-            <div style={{ fontFamily:'Rajdhani',fontSize:16,fontWeight:600,color:'var(--gold)',marginBottom:10 }}>Batting</div>
-            <div style={{ display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8,marginBottom:10 }}>
-              {[['runs','Runs'],['balls_faced','Balls'],['fours','4s'],['sixes','6s']].map(([k,l]) => (
-                <div key={k}><div style={{ fontSize:11,color:'var(--muted)',marginBottom:3 }}>{l}</div><input className="input" type="number" min="0" value={perf[k]} onChange={e => setPerf(p => ({ ...p,[k]:+e.target.value }))} /></div>
-              ))}
-            </div>
-            <div style={{ display:'flex',gap:16,marginBottom:14 }}>
-              <label style={{ display:'flex',alignItems:'center',gap:6,fontSize:13,cursor:'pointer' }}>
-                <input type="checkbox" checked={perf.is_duck} onChange={e => setPerf(p => ({ ...p,is_duck:e.target.checked }))} />
-                <span style={{ color:'var(--text2)' }}>Duck</span>
-              </label>
-            </div>
-            <div style={{ fontFamily:'Rajdhani',fontSize:16,fontWeight:600,color:'var(--teal)',marginBottom:10 }}>Bowling</div>
-            <div style={{ display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8,marginBottom:10 }}>
-              {[['wickets','Wickets'],['overs','Overs'],['maidens','Maidens'],['economy','Economy']].map(([k,l]) => (
-                <div key={k}><div style={{ fontSize:11,color:'var(--muted)',marginBottom:3 }}>{l}</div><input className="input" type="number" step="0.1" min="0" value={perf[k]} onChange={e => setPerf(p => ({ ...p,[k]:+e.target.value }))} /></div>
-              ))}
-            </div>
-            <div style={{ display:'flex',gap:16,marginBottom:14 }}>
-              {[['is_lbw','LBW'],['is_bowled','Bowled']].map(([k,l]) => (
-                <label key={k} style={{ display:'flex',alignItems:'center',gap:6,fontSize:13,cursor:'pointer' }}>
-                  <input type="checkbox" checked={perf[k]} onChange={e => setPerf(p => ({ ...p,[k]:e.target.checked }))} />
-                  <span style={{ color:'var(--text2)' }}>{l}</span>
-                </label>
-              ))}
-            </div>
-            <div style={{ fontFamily:'Rajdhani',fontSize:16,fontWeight:600,color:'var(--blue)',marginBottom:10 }}>Fielding</div>
-            <div style={{ display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginBottom:20 }}>
-              {[['catches','Catches'],['stumpings','Stumpings'],['run_outs','Run Outs']].map(([k,l]) => (
-                <div key={k}><div style={{ fontSize:11,color:'var(--muted)',marginBottom:3 }}>{l}</div><input className="input" type="number" min="0" value={perf[k]} onChange={e => setPerf(p => ({ ...p,[k]:+e.target.value }))} /></div>
-              ))}
-            </div>
-            <div style={{ padding:'12px 16px',background:'rgba(245,166,35,0.08)',border:'1px solid rgba(245,166,35,0.2)',borderRadius:10,marginBottom:16 }}>
-              <div style={{ fontSize:12,color:'var(--muted)',marginBottom:4 }}>Fantasy Points Preview</div>
-              <div style={{ fontFamily:'Rajdhani',fontSize:28,fontWeight:700,color:'var(--gold)' }}>{calculateFantasyPoints(perf).points} pts</div>
-              <div style={{ fontSize:11,color:'var(--text2)',marginTop:4 }}>{calculateFantasyPoints(perf).breakdown.map(b => `${b.label}: ${b.pts>0?'+':''}${b.pts}`).join(' · ')}</div>
-            </div>
-            <button className="btn btn-primary" style={{ width:'100%',padding:14 }} onClick={submitPerformance}>Save Performance & Calculate Points</button>
+          </div>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
+            <button className="btn btn-teal" style={{ padding:10, borderRadius:10 }} onClick={() => approveRelease(r)}>
+              ✓ Approve Release
+            </button>
+            <button className="btn btn-danger" style={{ padding:10, borderRadius:10 }} onClick={() => rejectRelease(r)}>
+              ✕ Reject
+            </button>
           </div>
         </div>
-      )}
+      ))}
+    </div>
+  )
+}
 
-      {/* RELEASES TAB */}
-      {tab === 'releases' && (
-        <div className="fade-in" style={{ maxWidth:600 }}>
-          <div style={{ fontFamily:'Rajdhani',fontSize:20,fontWeight:600,marginBottom:16,display:'flex',alignItems:'center',gap:10 }}>
-            Pending Release Requests
-            {releaseRequests.length > 0 && (
-              <span style={{ background:'var(--red)',color:'#fff',fontSize:12,padding:'2px 10px',borderRadius:20,fontWeight:700 }}>{releaseRequests.length}</span>
-            )}
-          </div>
-          {releaseRequests.length === 0 ? (
-            <div style={{ padding:40,textAlign:'center',background:'var(--navy2)',border:'1px solid var(--border)',borderRadius:'var(--radius)',color:'var(--muted)' }}>
-              <div style={{ fontSize:36,marginBottom:12 }}>✅</div>
-              <div>No pending release requests</div>
-            </div>
-          ) : (
-            <div style={{ display:'flex',flexDirection:'column',gap:10 }}>
-              {releaseRequests.map(r => (
-                <div key={r.id} className="card" style={{ padding:'16px 20px',display:'flex',alignItems:'center',justifyContent:'space-between' }}>
-                  <div>
-                    <div style={{ fontFamily:'Rajdhani',fontSize:18,fontWeight:700 }}>{r.players?.name}</div>
-                    <div style={{ fontSize:12,color:'var(--muted)',marginTop:2 }}>
-                      {r.players?.team} · Requested by <span style={{ color:'var(--text2)',fontWeight:500 }}>{r.profiles?.name}</span>
-                    </div>
-                    <div style={{ fontSize:11,color:'var(--muted)',marginTop:2 }}>{new Date(r.requested_at).toLocaleString('en-IN')}</div>
-                  </div>
-                  <div style={{ display:'flex',gap:8,flexShrink:0,marginLeft:12 }}>
-                    <button className="btn btn-teal" style={{ fontSize:12,padding:'8px 16px' }} onClick={() => handleRelease(r,'approved')}>✓ Approve</button>
-                    <button className="btn btn-danger" style={{ fontSize:12,padding:'8px 16px' }} onClick={() => handleRelease(r,'rejected')}>✗ Reject</button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+// ==================== TRADES TAB ====================
+function AdminTrades({ league, showMsg }) {
+  const [trades, setTrades] = useState([])
+  const [loading, setLoading] = useState(true)
 
-      {/* MEMBERS TAB */}
-      {tab === 'members' && (
-        <div className="fade-in" style={{ maxWidth:600 }}>
-          <div style={{ fontFamily:'Rajdhani',fontSize:20,fontWeight:600,marginBottom:16 }}>
-            League Members ({leagueMembers.length})
+  useEffect(() => { if (league) loadTrades() }, [league])
+
+  async function loadTrades() {
+    setLoading(true)
+    const { data } = await supabase
+      .from('trade_requests').select('*')
+      .eq('league_id', league.id)
+      .eq('status', 'accepted')
+      .order('created_at', { ascending: false })
+
+    const enriched = await Promise.all((data || []).map(async t => {
+      const [{ data: fp }, { data: tp }, { data: fu }, { data: tu }] = await Promise.all([
+        t.from_player_id ? supabase.from('players').select('*').eq('id', t.from_player_id).single() : { data: null },
+        t.to_player_id ? supabase.from('players').select('*').eq('id', t.to_player_id).single() : { data: null },
+        supabase.from('profiles').select('*').eq('id', t.from_user_id).single(),
+        supabase.from('profiles').select('*').eq('id', t.to_user_id).single(),
+      ])
+      return { ...t, from_player: fp, to_player: tp, from_user: fu, to_user: tu }
+    }))
+    setTrades(enriched)
+    setLoading(false)
+  }
+
+  async function approveTrade(trade) {
+    if (!confirm('Approve this trade? Players and cash will be swapped immediately.')) return
+    try {
+      // Swap players in squad
+      if (trade.from_player_id) {
+        await supabase.from('squad')
+          .update({ user_id: trade.to_user_id, is_traded: true, traded_from: trade.from_user?.name })
+          .eq('player_id', trade.from_player_id).eq('league_id', league.id)
+      }
+      if (trade.to_player_id) {
+        await supabase.from('squad')
+          .update({ user_id: trade.from_user_id, is_traded: true, traded_from: trade.to_user?.name })
+          .eq('player_id', trade.to_player_id).eq('league_id', league.id)
+      }
+      // Handle cash from sender
+      if (trade.cash_from > 0) {
+        const { data: fm } = await supabase.from('league_members').select('purse_remaining')
+          .eq('user_id', trade.from_user_id).eq('league_id', league.id).single()
+        const { data: tm } = await supabase.from('league_members').select('purse_remaining')
+          .eq('user_id', trade.to_user_id).eq('league_id', league.id).single()
+        await supabase.from('league_members').update({ purse_remaining: fm.purse_remaining - trade.cash_from })
+          .eq('user_id', trade.from_user_id).eq('league_id', league.id)
+        await supabase.from('league_members').update({ purse_remaining: tm.purse_remaining + trade.cash_from })
+          .eq('user_id', trade.to_user_id).eq('league_id', league.id)
+      }
+      // Handle cash from receiver
+      if (trade.cash_to > 0) {
+        const { data: fm } = await supabase.from('league_members').select('purse_remaining')
+          .eq('user_id', trade.from_user_id).eq('league_id', league.id).single()
+        const { data: tm } = await supabase.from('league_members').select('purse_remaining')
+          .eq('user_id', trade.to_user_id).eq('league_id', league.id).single()
+        await supabase.from('league_members').update({ purse_remaining: tm.purse_remaining - trade.cash_to })
+          .eq('user_id', trade.to_user_id).eq('league_id', league.id)
+        await supabase.from('league_members').update({ purse_remaining: fm.purse_remaining + trade.cash_to })
+          .eq('user_id', trade.from_user_id).eq('league_id', league.id)
+      }
+      await supabase.from('trade_requests').update({
+        status: 'admin_approved', resolved_at: new Date()
+      }).eq('id', trade.id)
+      showMsg('✅ Trade approved! Players and cash swapped.')
+      loadTrades()
+    } catch (e) {
+      showMsg('Error: ' + e.message, 'error')
+    }
+  }
+
+  async function rejectTrade(trade) {
+    if (!confirm('Reject this trade?')) return
+    await supabase.from('trade_requests').update({
+      status: 'admin_rejected', resolved_at: new Date()
+    }).eq('id', trade.id)
+    showMsg('Trade rejected.')
+    loadTrades()
+  }
+
+  if (loading) return <div style={{ padding:20, color:'var(--text3)' }}>Loading...</div>
+
+  return (
+    <div>
+      <h3 style={{ fontFamily:'Rajdhani', fontSize:20, fontWeight:700, marginBottom:16 }}>
+        Trades Awaiting Approval
+        <span style={{ color:'var(--text3)', fontWeight:400, fontSize:15, marginLeft:8 }}>({trades.length})</span>
+      </h3>
+      {trades.length === 0 ? (
+        <div style={{ padding:32, textAlign:'center', color:'var(--text3)', background:'var(--navy3)', borderRadius:12, fontSize:13 }}>
+          No trades awaiting approval
+        </div>
+      ) : trades.map(t => (
+        <div key={t.id} style={{ background:'var(--navy3)', border:'1px solid var(--border2)', borderRadius:14, padding:18, marginBottom:12 }}>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14, flexWrap:'wrap', gap:8 }}>
+            <div style={{ fontFamily:'Rajdhani', fontSize:18, fontWeight:700 }}>
+              <span style={{ color:'var(--gold)' }}>{t.from_user?.name?.split(' ')[0]}</span>
+              <span style={{ color:'var(--text3)', margin:'0 8px' }}>⇄</span>
+              <span style={{ color:'var(--teal)' }}>{t.to_user?.name?.split(' ')[0]}</span>
+            </div>
+            <div style={{ fontSize:11, color:'var(--text3)' }}>
+              {new Date(t.created_at).toLocaleDateString('en-IN', { day:'numeric', month:'short' })}
+            </div>
           </div>
-          <div style={{ display:'flex',flexDirection:'column',gap:10 }}>
-            {leagueMembers.map(m => {
-              const isMe = m.user_id === profile?.id
-              return (
-                <div key={m.id} className="card" style={{ padding:'16px 20px',display:'flex',alignItems:'center',justifyContent:'space-between' }}>
-                  <div style={{ display:'flex',alignItems:'center',gap:12 }}>
-                    <div style={{ width:40,height:40,borderRadius:'50%',background:'linear-gradient(135deg,var(--teal),var(--gold))',display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,fontWeight:700,color:'var(--navy)',flexShrink:0,overflow:'hidden' }}>
-                      {m.profiles?.avatar_url
-                        ? <img src={m.profiles.avatar_url} alt="" style={{ width:'100%',height:'100%',objectFit:'cover' }} />
-                        : m.profiles?.name?.slice(0,2).toUpperCase()}
-                    </div>
-                    <div>
-                      <div style={{ fontSize:14,fontWeight:600,display:'flex',alignItems:'center',gap:6 }}>
-                        {m.profiles?.name}
-                        {isMe && <span style={{ fontSize:10,background:'rgba(245,166,35,0.2)',color:'var(--gold)',borderRadius:4,padding:'1px 6px',fontWeight:700 }}>YOU</span>}
-                      </div>
-                      <div style={{ fontSize:12,color:'var(--muted)',marginTop:2 }}>{m.profiles?.email}</div>
-                      <div style={{ fontSize:12,color:'var(--teal)',marginTop:2 }}>₹{m.purse_remaining} Cr remaining</div>
-                    </div>
-                  </div>
-                  {!isMe && (
-                    <button className="btn btn-danger" style={{ fontSize:12,padding:'8px 14px',flexShrink:0 }}
-                      onClick={() => removeUser(m.user_id, m.profiles?.name)}>
-                      🚫 Remove
-                    </button>
-                  )}
-                  {isMe && (
-                    <span style={{ fontSize:11,color:'var(--gold)',fontWeight:700,padding:'6px 12px',background:'rgba(245,166,35,0.1)',borderRadius:8 }}>ADMIN</span>
-                  )}
+
+          {/* Trade details */}
+          <div style={{ display:'grid', gridTemplateColumns:'1fr auto 1fr', gap:12, alignItems:'center', marginBottom:14 }}>
+            <div style={{ background:'var(--navy2)', borderRadius:10, padding:'10px 12px' }}>
+              <div style={{ fontSize:10, color:'var(--text3)', textTransform:'uppercase', marginBottom:6 }}>{t.from_user?.name?.split(' ')[0]} gives</div>
+              {t.from_player && (
+                <div style={{ fontSize:13, fontWeight:600, color:'var(--text)', marginBottom:4 }}>
+                  🏏 {t.from_player.name}
+                  <span style={{ fontSize:10, color:'var(--text3)', marginLeft:4 }}>({t.from_player.team})</span>
                 </div>
-              )
-            })}
+              )}
+              {t.cash_from > 0 && (
+                <div style={{ fontSize:14, fontWeight:700, color:'var(--gold)', fontFamily:'Rajdhani' }}>+ ₹{t.cash_from}Cr</div>
+              )}
+              {!t.from_player && t.cash_from === 0 && (
+                <div style={{ fontSize:12, color:'var(--text3)', fontStyle:'italic' }}>Nothing</div>
+              )}
+            </div>
+
+            <div style={{ fontSize:20, color:'var(--text3)' }}>⇄</div>
+
+            <div style={{ background:'var(--navy2)', borderRadius:10, padding:'10px 12px' }}>
+              <div style={{ fontSize:10, color:'var(--text3)', textTransform:'uppercase', marginBottom:6 }}>{t.to_user?.name?.split(' ')[0]} gives</div>
+              {t.to_player && (
+                <div style={{ fontSize:13, fontWeight:600, color:'var(--text)', marginBottom:4 }}>
+                  🏏 {t.to_player.name}
+                  <span style={{ fontSize:10, color:'var(--text3)', marginLeft:4 }}>({t.to_player.team})</span>
+                </div>
+              )}
+              {t.cash_to > 0 && (
+                <div style={{ fontSize:14, fontWeight:700, color:'var(--teal)', fontFamily:'Rajdhani' }}>+ ₹{t.cash_to}Cr</div>
+              )}
+              {!t.to_player && t.cash_to === 0 && (
+                <div style={{ fontSize:12, color:'var(--text3)', fontStyle:'italic' }}>Nothing</div>
+              )}
+            </div>
+          </div>
+
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
+            <button className="btn btn-teal" style={{ padding:12, borderRadius:10, fontWeight:600 }} onClick={() => approveTrade(t)}>
+              ✓ Approve Trade
+            </button>
+            <button className="btn btn-danger" style={{ padding:12, borderRadius:10 }} onClick={() => rejectTrade(t)}>
+              ✕ Reject Trade
+            </button>
           </div>
         </div>
-      )}
+      ))}
     </div>
   )
 }

@@ -10,6 +10,7 @@ const NAV = [
   { to: '/auction', label: 'Auction', icon: '🔨' },
   { to: '/players', label: 'Players', icon: '🏏' },
   { to: '/matches', label: 'Matches', icon: '📊' },
+  { to: '/trades', label: 'Trades', icon: '🔄' },
 ]
 
 export default function Layout() {

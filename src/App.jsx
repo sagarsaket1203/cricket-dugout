@@ -7,6 +7,7 @@ import Auction from './pages/Auction'
 import Players from './pages/Players'
 import Matches from './pages/Matches'
 import Admin from './pages/Admin'
+import Trades from './pages/Trades'
 
 function AppRoutes() {
   const { profile, loading } = useAuth()
@@ -40,6 +41,7 @@ function AppRoutes() {
         <Route path="players" element={<Players />} />
         <Route path="matches" element={<Matches />} />
         <Route path="admin" element={<Admin />} />
+<Route path="trades" element={<Trades />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
