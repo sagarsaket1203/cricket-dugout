@@ -20,7 +20,6 @@ export default function Matches() {
   const [member, setMember] = useState(null)
 
   useEffect(() => { if (profile) load() }, [profile])
-
   useEffect(() => {
     const interval = setInterval(() => { if (liveMatches.length > 0) fetchLive() }, 120000)
     return () => clearInterval(interval)
@@ -28,14 +27,17 @@ export default function Matches() {
 
   async function load() {
     setLoading(true)
-    const { data: mem } = await supabase.from('league_members').select('*, leagues(*)').eq('user_id', profile.id).single()
+    const { data: mem } = await supabase.from('league_members').select('*, leagues(*)')
+      .eq('user_id', profile.id).single()
     if (mem) { setLeague(mem.leagues); setMember(mem) }
     const { data: matchData } = await supabase.from('matches').select('*').order('match_date', { ascending: false })
     setMatches(matchData || [])
     if (mem) {
-      const { data: squadData } = await supabase.from('squad').select('player_id').eq('league_id', mem.league_id).eq('user_id', profile.id)
+      const { data: squadData } = await supabase.from('squad').select('player_id')
+        .eq('league_id', mem.league_id).eq('user_id', profile.id)
       setMySquadIds(new Set(squadData?.map(s => s.player_id) || []))
-      const { data: pts } = await supabase.from('match_points').select('*').eq('league_id', mem.league_id).eq('user_id', profile.id)
+      const { data: pts } = await supabase.from('match_points').select('*')
+        .eq('league_id', mem.league_id).eq('user_id', profile.id)
       const ptsMap = {}
       pts?.forEach(p => { ptsMap[p.match_id] = p.total_points })
       setMatchPoints(ptsMap)
@@ -62,7 +64,7 @@ export default function Matches() {
     try {
       const live = await fetchCurrentMatches()
       if (live.length === 0) {
-        setSyncMsg('No IPL matches found right now. IPL starts 22 March 2026 — try again when it begins!')
+        setSyncMsg('No IPL matches right now. IPL starts 22 March 2026!')
         setSyncing(false); return
       }
       let added = 0
@@ -78,20 +80,19 @@ export default function Matches() {
           await supabase.from('matches').update({ status }).eq('cricapi_id', m.id)
         }
       }
-      setSyncMsg(`Done! ${added} new matches added. ${live.length} total IPL matches found.`)
+      setSyncMsg(`✅ Synced! ${added} new matches added.`)
       load()
     } catch (e) { setSyncMsg('Error: ' + e.message) }
     setSyncing(false)
   }
 
   async function syncMatchPoints(match) {
-    if (!match.cricapi_id) { setSyncMsg('This match has no CricAPI ID yet. Sync IPL Matches first.'); return }
+    if (!match.cricapi_id) { setSyncMsg('No CricAPI ID — sync IPL matches first.'); return }
     setSyncing(true); setSyncMsg(`Fetching scorecard for ${match.team1} vs ${match.team2}...`)
     try {
       const scorecard = await fetchMatchScore(match.cricapi_id)
-      if (!scorecard) { setSyncMsg('Scorecard not available yet. Try after the match ends.'); setSyncing(false); return }
+      if (!scorecard) { setSyncMsg('Scorecard not available yet.'); setSyncing(false); return }
       const perfs = parseScorecardToPerformances(scorecard)
-      setSyncMsg(`Found ${perfs.length} performances. Calculating points...`)
       let pointsAdded = 0
       for (const perf of perfs) {
         const lastName = perf.playerName.split(' ').pop()
@@ -110,9 +111,9 @@ export default function Matches() {
           }
         }
       }
-      setSyncMsg(`Done! ${perfs.length} performances synced. ${pointsAdded} fantasy points added.`)
+      setSyncMsg(`✅ Done! ${perfs.length} performances synced. ${pointsAdded} fantasy points added.`)
       load()
-    } catch (e) { setSyncMsg('Sync error: ' + e.message) }
+    } catch (e) { setSyncMsg('Error: ' + e.message) }
     setSyncing(false)
   }
 
@@ -123,133 +124,167 @@ export default function Matches() {
 
   const totalPts = Object.values(matchPoints).reduce((a, b) => a + b, 0)
   const daysToIPL = Math.max(0, Math.floor((new Date('2026-03-22') - new Date()) / 86400000))
+  const hoursToIPL = Math.max(0, Math.floor(((new Date('2026-03-22') - new Date()) % 86400000) / 3600000))
+  const minsToIPL = Math.max(0, Math.floor(((new Date('2026-03-22') - new Date()) % 3600000) / 60000))
 
-  if (loading) return <div style={{ display:'flex',alignItems:'center',justifyContent:'center',height:300 }}><div style={{ fontFamily:'Rajdhani',fontSize:20,color:'var(--gold)' }}>Loading...</div></div>
+  if (loading) return (
+    <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'60vh', flexDirection:'column', gap:12 }}>
+      <div style={{ width:40, height:40, border:'3px solid var(--border)', borderTop:'3px solid var(--gold)', borderRadius:'50%', animation:'spin 1s linear infinite' }} />
+      <div style={{ color:'var(--text2)', fontSize:14 }}>Loading matches...</div>
+    </div>
+  )
 
   return (
     <div>
-      <div className="fade-in" style={{ display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:24 }}>
+      {/* Header */}
+      <div className="fade-up" style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', marginBottom:32 }}>
         <div>
-          <h1 style={{ fontFamily:'Rajdhani',fontSize:32,fontWeight:700 }}>IPL 2026 Matches</h1>
-          <div style={{ color:'var(--muted)',fontSize:14,marginTop:2 }}>Auto-synced from CricAPI · Points update after each match</div>
+          <div style={{ fontSize:12, color:'var(--text3)', textTransform:'uppercase', letterSpacing:'1px', fontWeight:600, marginBottom:6 }}>Season 2026</div>
+          <h1 style={{ fontFamily:'Rajdhani', fontSize:36, fontWeight:700, marginBottom:4 }}>IPL Matches</h1>
+          <div style={{ color:'var(--text2)', fontSize:14 }}>Auto-synced from CricAPI · Points calculated after each match</div>
         </div>
-        <div style={{ display:'flex',gap:10,alignItems:'center',flexWrap:'wrap',justifyContent:'flex-end' }}>
-          <div style={{ padding:'8px 18px',background:'rgba(245,166,35,0.1)',border:'1px solid rgba(245,166,35,0.25)',borderRadius:10 }}>
-            <div style={{ fontSize:10,color:'var(--muted)',textTransform:'uppercase',letterSpacing:'0.8px' }}>Your Total</div>
-            <div style={{ fontFamily:'Rajdhani',fontSize:24,fontWeight:700,color:'var(--gold)' }}>{totalPts.toLocaleString()} pts</div>
+        <div style={{ display:'flex', gap:10, alignItems:'center', flexWrap:'wrap', justifyContent:'flex-end' }}>
+          <div style={{ padding:'10px 20px', background:'rgba(240,165,0,0.08)', border:'1px solid rgba(240,165,0,0.2)', borderRadius:12 }}>
+            <div style={{ fontSize:10, color:'var(--text3)', textTransform:'uppercase', letterSpacing:'0.8px', fontWeight:600 }}>Your Total</div>
+            <div style={{ fontFamily:'Rajdhani', fontSize:26, fontWeight:700, color:'var(--gold)', lineHeight:1.1 }}>{totalPts.toLocaleString()} <span style={{ fontSize:14, fontWeight:500 }}>pts</span></div>
           </div>
-          <button className="btn btn-teal" onClick={syncIPLMatches} disabled={syncing}>{syncing ? '⟳ Syncing...' : '🔄 Sync IPL Matches'}</button>
-          <button className="btn btn-secondary" onClick={() => setShowGuide(!showGuide)}>📋 Points Guide</button>
+          <button className="btn btn-teal" onClick={syncIPLMatches} disabled={syncing} style={{ padding:'10px 18px' }}>
+            {syncing ? '⟳ Syncing...' : '🔄 Sync Matches'}
+          </button>
+          <button className="btn btn-ghost" onClick={() => setShowGuide(!showGuide)} style={{ padding:'10px 18px' }}>
+            📋 Points Guide
+          </button>
         </div>
       </div>
 
+      {/* Sync message */}
       {syncMsg && (
-        <div style={{ padding:'12px 16px',background:syncMsg.includes('Error')?'rgba(232,69,69,0.1)':'rgba(0,201,167,0.1)',border:`1px solid ${syncMsg.includes('Error')?'rgba(232,69,69,0.3)':'rgba(0,201,167,0.3)'}`,borderRadius:10,marginBottom:16,color:syncMsg.includes('Error')?'var(--red)':'var(--teal)',fontSize:14 }}>
+        <div className="fade-in" style={{ padding:'12px 16px', background:syncMsg.includes('Error')?'var(--red2)':'var(--teal2)', border:`1px solid ${syncMsg.includes('Error')?'rgba(255,71,87,0.3)':'rgba(0,212,170,0.3)'}`, borderRadius:10, marginBottom:16, color:syncMsg.includes('Error')?'var(--red)':'var(--teal)', fontSize:14, fontWeight:500 }}>
           {syncMsg}
         </div>
       )}
 
+      {/* Live matches */}
       {liveMatches.length > 0 && (
-        <div style={{ marginBottom:24 }}>
-          <div style={{ fontFamily:'Rajdhani',fontSize:20,fontWeight:600,marginBottom:12,display:'flex',alignItems:'center',gap:8 }}>
-            <div className="live-dot" /> Live Now
+        <div style={{ marginBottom:28 }}>
+          <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:14 }}>
+            <div className="live-dot" />
+            <h2 style={{ fontFamily:'Rajdhani', fontSize:20, fontWeight:700 }}>Live Now</h2>
           </div>
-          <div style={{ display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:12 }}>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(2,1fr)', gap:12 }}>
             {liveMatches.map(m => (
-              <div key={m.id} style={{ background:'linear-gradient(135deg,#0D1A2E,#152035)',border:'1px solid rgba(232,69,69,0.3)',borderRadius:'var(--radius)',padding:16 }}>
-                <div style={{ fontFamily:'Rajdhani',fontSize:18,fontWeight:700,marginBottom:4 }}>{m.name}</div>
-                <div style={{ fontSize:12,color:'var(--muted)',marginBottom:8 }}>{m.venue}</div>
-                {m.score?.map((s,i) => (
-                  <div key={i} style={{ fontFamily:'Rajdhani',fontSize:15,color:'var(--text2)',marginBottom:2 }}>
-                    {s.inning}: <span style={{ color:'var(--gold)',fontWeight:700 }}>{s.r}/{s.w}</span> ({s.o} ov)
+              <div key={m.id} style={{ background:'linear-gradient(135deg, rgba(255,71,87,0.08), rgba(12,21,36,0.9))', border:'1px solid rgba(255,71,87,0.2)', borderRadius:16, padding:20 }}>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:12 }}>
+                  <div>
+                    <div style={{ fontFamily:'Rajdhani', fontSize:18, fontWeight:700, marginBottom:2 }}>{m.name}</div>
+                    <div style={{ fontSize:12, color:'var(--text3)' }}>{m.venue}</div>
+                  </div>
+                  <div style={{ display:'flex', alignItems:'center', gap:5, background:'var(--red2)', border:'1px solid rgba(255,71,87,0.3)', borderRadius:20, padding:'4px 10px' }}>
+                    <div className="live-dot" style={{ width:6, height:6 }} />
+                    <span style={{ fontSize:11, fontWeight:700, color:'var(--red)' }}>LIVE</span>
+                  </div>
+                </div>
+                {m.score?.map((s, i) => (
+                  <div key={i} style={{ fontFamily:'Rajdhani', fontSize:16, color:'var(--text2)', marginBottom:4 }}>
+                    <span style={{ color:'var(--text3)', fontSize:13 }}>{s.inning}: </span>
+                    <span style={{ color:'var(--gold)', fontWeight:700, fontSize:18 }}>{s.r}/{s.w}</span>
+                    <span style={{ color:'var(--text3)', fontSize:13 }}> ({s.o} ov)</span>
                   </div>
                 ))}
-                <div style={{ marginTop:8,fontSize:12,color:'var(--teal)' }}>{m.status}</div>
+                <div style={{ marginTop:10, fontSize:12, color:'var(--teal)', fontStyle:'italic' }}>{m.status}</div>
               </div>
             ))}
           </div>
         </div>
       )}
 
+      {/* Countdown */}
       {matches.length === 0 && (
-        <div className="fade-in card" style={{ padding:32,textAlign:'center',marginBottom:20 }}>
-          <div style={{ fontSize:48,marginBottom:12 }}>🏏</div>
-          <div style={{ fontFamily:'Rajdhani',fontSize:26,fontWeight:700,marginBottom:8 }}>IPL 2026 starts 22 March 2026!</div>
-          <div style={{ color:'var(--muted)',fontSize:14,marginBottom:24 }}>Click "Sync IPL Matches" once IPL begins to pull all data automatically.</div>
-          <div style={{ display:'flex',justifyContent:'center',gap:16 }}>
-            {[
-              { label:'Days', value:daysToIPL },
-              { label:'Hours', value:Math.max(0,Math.floor(((new Date('2026-03-22')-new Date())%86400000)/3600000)) },
-              { label:'Minutes', value:Math.max(0,Math.floor(((new Date('2026-03-22')-new Date())%3600000)/60000)) },
-            ].map(c => (
-              <div key={c.label} style={{ background:'var(--navy3)',borderRadius:12,padding:'16px 28px' }}>
-                <div style={{ fontFamily:'Rajdhani',fontSize:40,fontWeight:700,color:'var(--gold)' }}>{c.value}</div>
-                <div style={{ fontSize:11,color:'var(--muted)',textTransform:'uppercase',letterSpacing:'0.8px' }}>{c.label}</div>
+        <div className="fade-up card" style={{ padding:48, textAlign:'center', marginBottom:24, background:'linear-gradient(135deg, rgba(240,165,0,0.05), var(--navy2))', border:'1px solid rgba(240,165,0,0.15)' }}>
+          <div style={{ fontSize:56, marginBottom:16 }}>🏏</div>
+          <h2 style={{ fontFamily:'Rajdhani', fontSize:32, fontWeight:700, marginBottom:8 }}>IPL 2026 starts 22 March!</h2>
+          <div style={{ color:'var(--text2)', fontSize:14, marginBottom:28 }}>Click "Sync Matches" once IPL begins to pull all data automatically.</div>
+          <div style={{ display:'flex', justifyContent:'center', gap:16 }}>
+            {[{ label:'Days', value:daysToIPL }, { label:'Hours', value:hoursToIPL }, { label:'Minutes', value:minsToIPL }].map(c => (
+              <div key={c.label} style={{ background:'var(--navy3)', borderRadius:14, padding:'20px 32px', border:'1px solid var(--border)' }}>
+                <div style={{ fontFamily:'Rajdhani', fontSize:48, fontWeight:700, color:'var(--gold)', lineHeight:1 }}>{c.value}</div>
+                <div style={{ fontSize:11, color:'var(--text3)', textTransform:'uppercase', letterSpacing:'0.8px', marginTop:4 }}>{c.label}</div>
               </div>
             ))}
           </div>
         </div>
       )}
 
+      {/* Points guide */}
       {showGuide && (
-        <div className="fade-in card" style={{ padding:20,marginBottom:20 }}>
-          <div style={{ fontFamily:'Rajdhani',fontSize:18,fontWeight:600,marginBottom:14,color:'var(--gold)' }}>Fantasy Points System</div>
-          <div style={{ display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8 }}>
-            {POINTS_GUIDE.map((g,i) => (
-              <div key={i} style={{ display:'flex',justifyContent:'space-between',padding:'6px 12px',background:'var(--navy3)',borderRadius:8 }}>
-                <span style={{ fontSize:12,color:'var(--text2)' }}>{g.action}</span>
-                <span style={{ fontSize:13,fontWeight:700,fontFamily:'Rajdhani',color:g.pts.startsWith('+')?'var(--teal)':'var(--red)' }}>{g.pts}</span>
+        <div className="fade-in card" style={{ padding:24, marginBottom:24 }}>
+          <h3 style={{ fontFamily:'Rajdhani', fontSize:20, fontWeight:700, marginBottom:16, color:'var(--gold)' }}>Fantasy Points Scoring System</h3>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:8 }}>
+            {POINTS_GUIDE.map((g, i) => (
+              <div key={i} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'8px 12px', background:'var(--navy3)', borderRadius:8, border:'1px solid var(--border)' }}>
+                <span style={{ fontSize:12, color:'var(--text2)' }}>{g.action}</span>
+                <span style={{ fontSize:14, fontWeight:700, fontFamily:'Rajdhani', color:g.pts.startsWith('+')?'var(--teal)':'var(--red)' }}>{g.pts}</span>
               </div>
             ))}
           </div>
         </div>
       )}
 
+      {/* Match cards */}
       {matches.length > 0 && (
-        <div style={{ display:'grid',gridTemplateColumns:'1fr 1fr',gap:14 }}>
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14 }}>
           {matches.map(m => {
             const myPts = matchPoints[m.id] || 0
-            const matchPerfs = (performances[m.id]||[]).filter(p => mySquadIds.has(p.player_id))
-            const statusColor = m.status==='live'?'var(--red)':m.status==='completed'?'var(--teal)':'var(--muted)'
+            const matchPerfs = (performances[m.id] || []).filter(p => mySquadIds.has(p.player_id))
+            const statusColor = m.status==='live'?'var(--red)':m.status==='completed'?'var(--teal)':'var(--text3)'
+            const statusBg = m.status==='live'?'var(--red2)':m.status==='completed'?'var(--teal2)':'var(--navy4)'
             return (
-              <div key={m.id} className="card" style={{ overflow:'hidden' }}>
-                <div style={{ background:'#0A1628',padding:'12px 16px',display:'flex',alignItems:'center',justifyContent:'space-between',borderBottom:'1px solid var(--border)' }}>
+              <div key={m.id} style={{ background:'var(--navy2)', border:'1px solid var(--border)', borderRadius:16, overflow:'hidden', transition:'all 0.2s' }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor='var(--border2)'; e.currentTarget.style.transform='translateY(-2px)' }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor='var(--border)'; e.currentTarget.style.transform='translateY(0)' }}>
+                <div style={{ background:'var(--navy3)', padding:'14px 18px', display:'flex', alignItems:'center', justifyContent:'space-between', borderBottom:'1px solid var(--border)' }}>
                   <div>
-                    <div style={{ fontFamily:'Rajdhani',fontSize:18,fontWeight:700 }}>{m.team1} vs {m.team2}</div>
-                    <div style={{ fontSize:11,color:'var(--muted)',marginTop:2 }}>
-                      {m.match_date ? new Date(m.match_date).toLocaleDateString('en-IN',{day:'numeric',month:'short'}) : 'TBD'}
+                    <div style={{ fontFamily:'Rajdhani', fontSize:20, fontWeight:700 }}>{m.team1} vs {m.team2}</div>
+                    <div style={{ fontSize:11, color:'var(--text3)', marginTop:2 }}>
+                      {m.match_date ? new Date(m.match_date).toLocaleDateString('en-IN', { day:'numeric', month:'short', year:'numeric' }) : 'TBD'}
                       {m.venue && ` · ${m.venue}`}
                     </div>
                   </div>
                   <div style={{ textAlign:'right' }}>
-                    <div style={{ fontFamily:'Rajdhani',fontSize:22,fontWeight:700,color:myPts>0?'var(--gold)':'var(--text2)' }}>+{myPts}</div>
-                    <div style={{ display:'flex',alignItems:'center',gap:4,justifyContent:'flex-end' }}>
-                      {m.status==='live' && <div className="live-dot" style={{ width:6,height:6 }} />}
-                      <span style={{ fontSize:10,color:statusColor,fontWeight:600,textTransform:'uppercase' }}>{m.status}</span>
+                    <div style={{ fontFamily:'Rajdhani', fontSize:24, fontWeight:700, color:myPts>0?'var(--gold)':'var(--text3)' }}>+{myPts}</div>
+                    <div style={{ display:'inline-flex', alignItems:'center', gap:4, padding:'2px 8px', borderRadius:20, background:statusBg, marginTop:2 }}>
+                      {m.status==='live' && <div className="live-dot" style={{ width:5, height:5 }} />}
+                      <span style={{ fontSize:9, color:statusColor, fontWeight:700, textTransform:'uppercase', letterSpacing:'0.5px' }}>{m.status}</span>
                     </div>
                   </div>
                 </div>
+
                 {matchPerfs.length > 0 ? matchPerfs.slice(0,4).map(p => {
                   const { points, breakdown } = calculateFantasyPoints(p)
                   return (
-                    <div key={p.id} style={{ display:'flex',justifyContent:'space-between',alignItems:'flex-start',padding:'9px 16px',borderBottom:'1px solid var(--border)' }}>
+                    <div key={p.id} style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', padding:'10px 18px', borderBottom:'1px solid var(--border)' }}>
                       <div>
-                        <div style={{ fontSize:13,fontWeight:500 }}>{players[p.player_id]?.name||'Player'}</div>
-                        <div style={{ fontSize:11,color:'var(--muted)',marginTop:1 }}>
-                          {p.runs>0&&`${p.runs} runs`}{p.runs>0&&p.wickets>0&&' · '}{p.wickets>0&&`${p.wickets} wkts`}
+                        <div style={{ fontSize:13, fontWeight:600 }}>{players[p.player_id]?.name || 'Player'}</div>
+                        <div style={{ fontSize:11, color:'var(--text3)', marginTop:2 }}>
+                          {p.runs > 0 && `${p.runs} runs`}{p.runs > 0 && p.wickets > 0 && ' · '}{p.wickets > 0 && `${p.wickets} wkts`}{p.catches > 0 && ` · ${p.catches} catch`}
                         </div>
-                        <div style={{ fontSize:10,color:'var(--muted)',marginTop:2 }}>{breakdown.slice(0,2).map(b=>`${b.label}(${b.pts>0?'+':''}${b.pts})`).join(' · ')}</div>
+                        <div style={{ fontSize:10, color:'var(--text3)', marginTop:2 }}>{breakdown.slice(0,2).map(b => `${b.label}(${b.pts>0?'+':''}${b.pts})`).join(' · ')}</div>
                       </div>
-                      <div style={{ fontFamily:'Rajdhani',fontSize:18,fontWeight:700,color:points>=0?'var(--teal)':'var(--red)',flexShrink:0,marginLeft:8 }}>{points>=0?'+':''}{points}</div>
+                      <div style={{ fontFamily:'Rajdhani', fontSize:20, fontWeight:700, color:points>=0?'var(--teal)':'var(--red)', flexShrink:0, marginLeft:12 }}>{points>=0?'+':''}{points}</div>
                     </div>
                   )
                 }) : (
-                  <div style={{ padding:16,color:'var(--muted)',fontSize:13,textAlign:'center' }}>
-                    {m.status==='upcoming' ? 'Match not played yet' : (
+                  <div style={{ padding:20, color:'var(--text3)', fontSize:13, textAlign:'center' }}>
+                    {m.status==='upcoming' ? (
                       <div>
-                        <div style={{ marginBottom:8 }}>Scorecard not synced yet</div>
+                        <div style={{ fontSize:24, marginBottom:6 }}>📅</div>
+                        <div>Match not played yet</div>
+                      </div>
+                    ) : (
+                      <div>
+                        <div style={{ marginBottom:10 }}>Scorecard not synced yet</div>
                         {member?.is_admin && (
-                          <button className="btn btn-teal" style={{ fontSize:12,padding:'6px 14px' }} onClick={() => syncMatchPoints(m)} disabled={syncing}>
+                          <button className="btn btn-teal" style={{ fontSize:12, padding:'6px 14px' }} onClick={() => syncMatchPoints(m)} disabled={syncing}>
                             🔄 Sync Scorecard
                           </button>
                         )}
