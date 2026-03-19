@@ -45,12 +45,13 @@ export default function Auction() {
   async function init() {
     setLoading(true)
     try {
-  const { data: mems } = await supabase
-  .from('league_members').select('*, leagues(*)')
-  .eq('user_id', profile.id)
-if (!mems || mems.length === 0) { setLoading(false); return }
-const savedId = getSelectedLeagueId()
-const mem = (savedId && mems.find(m => m.league_id === savedId)) || mems[0]
+      const { data: mems } = await supabase
+        .from('league_members').select('*, leagues(*)')
+        .eq('user_id', profile.id)
+      if (!mems || mems.length === 0) { setLoading(false); return }
+      const savedId = getSelectedLeagueId()
+      const mem = (savedId && mems.find(m => m.league_id === savedId)) || mems[0]
+
       setLeague(mem.leagues)
       setMember(mem)
       leagueRef.current = mem.leagues
@@ -83,8 +84,14 @@ const mem = (savedId && mems.find(m => m.league_id === savedId)) || mems[0]
       const { data: allPlayers } = await supabase.from('players').select('*').order('name')
       const { data: squadData } = await supabase.from('squad').select('player_id').eq('league_id', leagueId)
       const soldIds = new Set(squadData?.map(s => s.player_id) || [])
-      setPlayers((allPlayers || []).filter(p => !soldIds.has(p.id) && !p.is_unsold))
-      setUnsoldPlayers((allPlayers || []).filter(p => p.is_unsold))
+
+      // Per-league unsold players
+      const { data: unsoldData } = await supabase
+        .from('league_unsold_players').select('player_id').eq('league_id', leagueId)
+      const unsoldIds = new Set(unsoldData?.map(u => u.player_id) || [])
+
+      setPlayers((allPlayers || []).filter(p => !soldIds.has(p.id) && !unsoldIds.has(p.id)))
+      setUnsoldPlayers((allPlayers || []).filter(p => unsoldIds.has(p.id)))
 
       if (activeId) {
         const { data: bids } = await supabase
@@ -239,19 +246,12 @@ const mem = (savedId && mems.find(m => m.league_id === savedId)) || mems[0]
   async function placeBid(amount) {
     if (!currentPlayer || bidding) return
     if (!member || member.purse_remaining < amount) {
-      alert(`Not enough purse! You have ₹${member?.purse_remaining} Cr left.`)
+      alert(`Not enough purse! You have ₹${member?.purse_remaining}Cr left.`)
       return
     }
-    if (amount <= currentBid) {
-      alert(`Bid must be more than ₹${currentBid} Cr`)
-      return
-    }
-    if (currentBidder?.id === profile.id) {
-      alert("You're already the highest bidder!")
-      return
-    }
+    if (amount <= currentBid) { alert(`Bid must be more than ₹${currentBid}Cr`); return }
+    if (currentBidder?.id === profile.id) { alert("You're already the highest bidder!"); return }
 
-    // Check 15 player limit
     const { data: mySquad } = await supabase.from('squad').select('id')
       .eq('league_id', league.id).eq('user_id', profile.id)
     if (mySquad?.length >= 15) {
@@ -259,22 +259,16 @@ const mem = (savedId && mems.find(m => m.league_id === savedId)) || mems[0]
       return
     }
 
-    // Optimistic update
     const prev = { bid: currentBid, bidder: currentBidder }
     setCurrentBid(amount)
     setCurrentBidder({ id: profile.id, name: profile.name })
-    setBidHistory(h => [{
-      amount, bidder_id: profile.id,
-      profiles: { name: profile.name }, id: Date.now()
-    }, ...h.slice(0, 7)])
+    setBidHistory(h => [{ amount, bidder_id: profile.id, profiles: { name: profile.name }, id: Date.now() }, ...h.slice(0, 7)])
     resetTimer()
     setBidding(true)
 
     const { error } = await supabase.from('auction_bids').insert({
-      league_id: league.id,
-      player_id: currentPlayer.id,
-      bidder_id: profile.id,
-      amount
+      league_id: league.id, player_id: currentPlayer.id,
+      bidder_id: profile.id, amount
     })
 
     if (error) {
@@ -310,7 +304,7 @@ const mem = (savedId && mems.find(m => m.league_id === savedId)) || mems[0]
         purse_remaining: Math.max(0, wm.purse_remaining - currentBid)
       }).eq('league_id', league.id).eq('user_id', currentBidder.id)
     }
-    setSoldMsg(`🔨 ${currentPlayer.name} SOLD to ${currentBidder.name?.split(' ')[0]} for ₹${currentBid} Cr!`)
+    setSoldMsg(`🔨 ${currentPlayer.name} SOLD to ${currentBidder.name?.split(' ')[0]} for ₹${currentBid}Cr!`)
     setTimeout(() => setSoldMsg(''), 5000)
     await clearActive()
     await loadAll(league.id, null)
@@ -318,8 +312,11 @@ const mem = (savedId && mems.find(m => m.league_id === savedId)) || mems[0]
 
   async function markUnsold() {
     if (!currentPlayer || !member?.is_admin) return
-    if (!confirm(`Mark ${currentPlayer.name} as unsold?`)) return
-    await supabase.from('players').update({ is_unsold: true }).eq('id', currentPlayer.id)
+    if (!confirm(`Mark ${currentPlayer.name} as unsold in this league?`)) return
+    // Per-league unsold — insert into league_unsold_players
+    await supabase.from('league_unsold_players').upsert({
+      league_id: league.id, player_id: currentPlayer.id
+    }, { onConflict: 'league_id,player_id' })
     setSoldMsg(`${currentPlayer.name} marked unsold.`)
     setTimeout(() => setSoldMsg(''), 3000)
     await clearActive()
@@ -337,7 +334,9 @@ const mem = (savedId && mems.find(m => m.league_id === savedId)) || mems[0]
 
   async function reAuction(player) {
     if (!member?.is_admin) return
-    await supabase.from('players').update({ is_unsold: false }).eq('id', player.id)
+    // Remove from per-league unsold
+    await supabase.from('league_unsold_players')
+      .delete().eq('league_id', league.id).eq('player_id', player.id)
     setSoldMsg(`${player.name} back to available!`)
     setTimeout(() => setSoldMsg(''), 3000)
     await loadAll(league.id, activePlayerId)
@@ -347,7 +346,7 @@ const mem = (savedId && mems.find(m => m.league_id === savedId)) || mems[0]
     if (!member?.is_admin) return
     const { data: check } = await supabase.from('squad').select('id')
       .eq('player_id', player.id).eq('league_id', league.id).maybeSingle()
-    if (check) { alert('Already sold!'); return }
+    if (check) { alert('Already sold in this league!'); return }
 
     setCurrentPlayer(player); setCurrentBid(player.base_price)
     setCurrentBidder(null); setBidHistory([])
@@ -391,7 +390,9 @@ const mem = (savedId && mems.find(m => m.league_id === savedId)) || mems[0]
         <div>
           <div style={{ fontSize:11, color:'var(--text3)', textTransform:'uppercase', letterSpacing:'1px', fontWeight:600, marginBottom:4 }}>Live Bidding</div>
           <h1 style={{ fontFamily:'Rajdhani', fontSize:'clamp(22px,5vw,34px)', fontWeight:700, marginBottom:3 }}>Auction Room</h1>
-          <div style={{ color:'var(--text2)', fontSize:13 }}>{players.length} available · {unsoldPlayers.length} unsold</div>
+          <div style={{ color:'var(--text2)', fontSize:13 }}>
+            {league.name} · {players.length} available · {unsoldPlayers.length} unsold
+          </div>
         </div>
         <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
           <div style={{ display:'flex', alignItems:'center', gap:5, background:'rgba(255,71,87,0.1)', border:'1px solid rgba(255,71,87,0.2)', borderRadius:20, padding:'6px 12px' }}>
@@ -509,7 +510,7 @@ const mem = (savedId && mems.find(m => m.league_id === savedId)) || mems[0]
 
             {isMyBid && (
               <div style={{ padding:'9px 14px', background:'rgba(0,212,170,0.06)', border:'1px solid rgba(0,212,170,0.18)', borderRadius:10, marginBottom:8, fontSize:13, color:'var(--teal)', fontWeight:600 }}>
-                ✅ You're leading at ₹{currentBid} Cr — waiting for others...
+                ✅ You're leading at ₹{currentBid}Cr — waiting for others...
               </div>
             )}
 
@@ -597,7 +598,6 @@ const mem = (savedId && mems.find(m => m.league_id === savedId)) || mems[0]
 
           {/* Sidebar */}
           <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
-            {/* Purses */}
             <div style={{ background:'var(--navy2)', border:'1px solid var(--border)', borderRadius:14, padding:16 }}>
               <div style={{ fontSize:10, color:'var(--text3)', textTransform:'uppercase', letterSpacing:'1px', fontWeight:600, marginBottom:14 }}>Friend Purses</div>
               {members.sort((a,b) => b.purse_remaining - a.purse_remaining).map(m => {
@@ -629,7 +629,6 @@ const mem = (savedId && mems.find(m => m.league_id === savedId)) || mems[0]
               })}
             </div>
 
-            {/* Bid feed */}
             <div style={{ background:'var(--navy2)', border:'1px solid var(--border)', borderRadius:14, padding:16 }}>
               <div style={{ fontSize:10, color:'var(--text3)', textTransform:'uppercase', letterSpacing:'1px', fontWeight:600, marginBottom:12 }}>Bid Feed</div>
               {bidHistory.length === 0 ? (
