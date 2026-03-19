@@ -4,56 +4,78 @@ import { supabase } from '../lib/supabase'
 const AuthContext = createContext({})
 
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null)
   const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    // Get initial session
     supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null)
-      if (session?.user) fetchProfile(session.user)
-      setLoading(false)
+      if (session?.user) {
+        loadProfile(session.user)
+      } else {
+        setLoading(false)
+      }
     })
+
+    // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null)
-      if (session?.user) fetchProfile(session.user)
-      else setProfile(null)
+      if (session?.user) {
+        loadProfile(session.user)
+      } else {
+        setProfile(null)
+        setLoading(false)
+      }
     })
+
     return () => subscription.unsubscribe()
   }, [])
 
-  async function fetchProfile(user) {
-    const { data } = await supabase.from('profiles').select('*').eq('id', user.id).single()
-    if (data) {
-      setProfile(data)
-    } else {
-      // Create profile on first login
-      const newProfile = {
-        id: user.id,
-        name: user.user_metadata?.full_name || user.email?.split('@')[0],
-        email: user.email,
-        avatar_url: user.user_metadata?.avatar_url,
-      }
-      await supabase.from('profiles').insert(newProfile)
-      setProfile(newProfile)
-    }
-  }
+  async function loadProfile(user) {
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .single()
 
-  async function signInWithGoogle() {
-    await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: { redirectTo: window.location.origin }
-    })
+      if (error || !data) {
+        // Profile doesn't exist yet — create it
+        const newProfile = {
+          id: user.id,
+          name: user.user_metadata?.full_name || user.email?.split('@')[0] || 'User',
+          email: user.email,
+          avatar_url: user.user_metadata?.avatar_url || null,
+        }
+        const { data: created } = await supabase
+          .from('profiles')
+          .upsert(newProfile)
+          .select()
+          .single()
+        setProfile(created || newProfile)
+      } else {
+        setProfile(data)
+      }
+    } catch (e) {
+      console.error('Profile load error:', e)
+      // Still set a basic profile so app doesn't crash
+      setProfile({
+        id: user.id,
+        name: user.user_metadata?.full_name || 'User',
+        email: user.email,
+        avatar_url: user.user_metadata?.avatar_url || null,
+      })
+    } finally {
+      setLoading(false)
+    }
   }
 
   async function signOut() {
     await supabase.auth.signOut()
-    setUser(null)
     setProfile(null)
   }
 
   return (
-    <AuthContext.Provider value={{ user, profile, loading, signInWithGoogle, signOut }}>
+    <AuthContext.Provider value={{ profile, loading, signOut }}>
       {children}
     </AuthContext.Provider>
   )
