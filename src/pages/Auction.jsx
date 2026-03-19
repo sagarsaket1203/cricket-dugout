@@ -49,6 +49,7 @@ export default function Auction() {
         .from('league_members').select('*, leagues(*)')
         .eq('user_id', profile.id)
       if (!mems || mems.length === 0) { setLoading(false); return }
+
       const savedId = getSelectedLeagueId()
       const mem = (savedId && mems.find(m => m.league_id === savedId)) || mems[0]
 
@@ -81,17 +82,30 @@ export default function Auction() {
       const myMem = allMem?.find(m => m.user_id === profile.id)
       if (myMem) { setMember(myMem); memberRef.current = myMem }
 
-      const { data: allPlayers } = await supabase.from('players').select('*').order('name')
-      const { data: squadData } = await supabase.from('squad').select('player_id').eq('league_id', leagueId)
+      // All players
+      const { data: allPlayers } = await supabase
+        .from('players').select('*').order('name')
+
+      // Sold players in THIS league
+      const { data: squadData } = await supabase
+        .from('squad').select('player_id')
+        .eq('league_id', leagueId)
       const soldIds = new Set(squadData?.map(s => s.player_id) || [])
 
-      // Per-league unsold players
+      // Unsold players in THIS league only
       const { data: unsoldData } = await supabase
-        .from('league_unsold_players').select('player_id').eq('league_id', leagueId)
+        .from('league_unsold_players').select('player_id')
+        .eq('league_id', leagueId)
       const unsoldIds = new Set(unsoldData?.map(u => u.player_id) || [])
 
-      setPlayers((allPlayers || []).filter(p => !soldIds.has(p.id) && !unsoldIds.has(p.id)))
-      setUnsoldPlayers((allPlayers || []).filter(p => unsoldIds.has(p.id)))
+      // Available = not sold AND not marked unsold in this league
+      const available = (allPlayers || []).filter(p =>
+        !soldIds.has(p.id) && !unsoldIds.has(p.id)
+      )
+      const unsold = (allPlayers || []).filter(p => unsoldIds.has(p.id))
+
+      setPlayers(available)
+      setUnsoldPlayers(unsold)
 
       if (activeId) {
         const { data: bids } = await supabase
@@ -108,7 +122,8 @@ export default function Auction() {
           setBidHistory(bids)
           resetTimer()
         } else if (!bids?.length) {
-          const { data: p } = await supabase.from('players').select('*').eq('id', activeId).single()
+          const { data: p } = await supabase
+            .from('players').select('*').eq('id', activeId).single()
           if (p && !soldIds.has(p.id)) {
             setCurrentPlayer(p)
             setCurrentBid(p.base_price)
@@ -143,10 +158,13 @@ export default function Auction() {
           if (timerRef.current) clearInterval(timerRef.current)
           await loadAll(leagueId, null)
         } else {
-          const { data: p } = await supabase.from('players').select('*').eq('id', newActiveId).single()
+          const { data: p } = await supabase
+            .from('players').select('*').eq('id', newActiveId).single()
           if (p) {
-            setCurrentPlayer(p); setCurrentBid(p.base_price)
-            setCurrentBidder(null); setBidHistory([])
+            setCurrentPlayer(p)
+            setCurrentBid(p.base_price)
+            setCurrentBidder(null)
+            setBidHistory([])
             resetTimer()
           }
         }
@@ -255,14 +273,17 @@ export default function Auction() {
     const { data: mySquad } = await supabase.from('squad').select('id')
       .eq('league_id', league.id).eq('user_id', profile.id)
     if (mySquad?.length >= 15) {
-      alert('Squad full! You already have 15 players — maximum limit reached.')
+      alert('Squad full! Maximum 15 players reached.')
       return
     }
 
     const prev = { bid: currentBid, bidder: currentBidder }
     setCurrentBid(amount)
     setCurrentBidder({ id: profile.id, name: profile.name })
-    setBidHistory(h => [{ amount, bidder_id: profile.id, profiles: { name: profile.name }, id: Date.now() }, ...h.slice(0, 7)])
+    setBidHistory(h => [{
+      amount, bidder_id: profile.id,
+      profiles: { name: profile.name }, id: Date.now()
+    }, ...h.slice(0, 7)])
     resetTimer()
     setBidding(true)
 
@@ -270,7 +291,6 @@ export default function Auction() {
       league_id: league.id, player_id: currentPlayer.id,
       bidder_id: profile.id, amount
     })
-
     if (error) {
       setCurrentBid(prev.bid)
       setCurrentBidder(prev.bidder)
@@ -313,7 +333,6 @@ export default function Auction() {
   async function markUnsold() {
     if (!currentPlayer || !member?.is_admin) return
     if (!confirm(`Mark ${currentPlayer.name} as unsold in this league?`)) return
-    // Per-league unsold — insert into league_unsold_players
     await supabase.from('league_unsold_players').upsert({
       league_id: league.id, player_id: currentPlayer.id
     }, { onConflict: 'league_id,player_id' })
@@ -334,7 +353,6 @@ export default function Auction() {
 
   async function reAuction(player) {
     if (!member?.is_admin) return
-    // Remove from per-league unsold
     await supabase.from('league_unsold_players')
       .delete().eq('league_id', league.id).eq('player_id', player.id)
     setSoldMsg(`${player.name} back to available!`)
@@ -348,8 +366,10 @@ export default function Auction() {
       .eq('player_id', player.id).eq('league_id', league.id).maybeSingle()
     if (check) { alert('Already sold in this league!'); return }
 
-    setCurrentPlayer(player); setCurrentBid(player.base_price)
-    setCurrentBidder(null); setBidHistory([])
+    setCurrentPlayer(player)
+    setCurrentBid(player.base_price)
+    setCurrentBidder(null)
+    setBidHistory([])
     setActivePlayerId(player.id)
     resetTimer()
 
@@ -390,8 +410,9 @@ export default function Auction() {
         <div>
           <div style={{ fontSize:11, color:'var(--text3)', textTransform:'uppercase', letterSpacing:'1px', fontWeight:600, marginBottom:4 }}>Live Bidding</div>
           <h1 style={{ fontFamily:'Rajdhani', fontSize:'clamp(22px,5vw,34px)', fontWeight:700, marginBottom:3 }}>Auction Room</h1>
-          <div style={{ color:'var(--text2)', fontSize:13 }}>
-            {league.name} · {players.length} available · {unsoldPlayers.length} unsold
+          <div style={{ color:'var(--gold)', fontSize:13, fontWeight:600 }}>
+            {league.name}
+            <span style={{ color:'var(--text3)', fontWeight:400 }}> · {players.length} available · {unsoldPlayers.length} unsold</span>
           </div>
         </div>
         <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
@@ -418,23 +439,20 @@ export default function Auction() {
 
       <div style={{ display:'grid', gridTemplateColumns:'1fr', gap:14 }}>
 
-        {/* Current player card */}
+        {/* Current player */}
         {currentPlayer ? (
           <div style={{ background:'linear-gradient(135deg, #0E1B2E, #13203A)', border:`1px solid ${isMyBid?'rgba(0,212,170,0.3)':'rgba(240,165,0,0.15)'}`, borderRadius:18, padding:'20px', position:'relative', overflow:'hidden' }}>
             <div style={{ position:'absolute', top:-30, right:-30, width:150, height:150, borderRadius:'50%', background:`radial-gradient(circle, ${isMyBid?'rgba(0,212,170,0.07)':'rgba(240,165,0,0.05)'} 0%, transparent 70%)`, pointerEvents:'none' }} />
-
             {isMyBid && (
               <div style={{ position:'absolute', top:14, right:14, display:'flex', alignItems:'center', gap:5, background:'rgba(0,212,170,0.12)', border:'1px solid rgba(0,212,170,0.25)', borderRadius:20, padding:'3px 10px' }}>
                 <div style={{ width:5, height:5, borderRadius:'50%', background:'var(--teal)' }} />
                 <span style={{ fontSize:10, fontWeight:700, color:'var(--teal)' }}>LEADING</span>
               </div>
             )}
-
             <div style={{ display:'flex', gap:16, alignItems:'flex-start', flexWrap:'wrap' }}>
               <div style={{ width:72, height:72, borderRadius:16, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Rajdhani', fontSize:24, fontWeight:700, flexShrink:0, background:ROLE_BG[currentPlayer.role], color:ROLE_TEXT[currentPlayer.role], border:`1px solid ${ROLE_TEXT[currentPlayer.role]}33` }}>
                 {currentPlayer.image_initials || currentPlayer.name.slice(0,2)}
               </div>
-
               <div style={{ flex:1, minWidth:160 }}>
                 <div style={{ fontFamily:'Rajdhani', fontSize:'clamp(20px,4vw,28px)', fontWeight:700, color:'var(--text)', marginBottom:6 }}>{currentPlayer.name}</div>
                 <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:12, flexWrap:'wrap' }}>
@@ -456,7 +474,6 @@ export default function Auction() {
                   ))}
                 </div>
               </div>
-
               <div style={{ textAlign:'right', flexShrink:0 }}>
                 <div style={{ fontSize:9, color:'var(--text3)', textTransform:'uppercase', letterSpacing:'1px', marginBottom:4 }}>Current Bid</div>
                 <div style={{ fontFamily:'Rajdhani', fontSize:'clamp(32px,6vw,44px)', fontWeight:700, color:'var(--gold)', lineHeight:1 }}>₹{currentBid}</div>
@@ -534,7 +551,7 @@ export default function Auction() {
         )}
 
         {/* Two column layout */}
-        <div style={{ display:'grid', gridTemplateColumns: window.innerWidth > 768 ? '1fr 280px' : '1fr', gap:14 }}>
+        <div style={{ display:'grid', gridTemplateColumns:window.innerWidth > 768 ? '1fr 280px' : '1fr', gap:14 }}>
 
           {/* Admin player list */}
           {member?.is_admin && (
@@ -543,25 +560,36 @@ export default function Auction() {
                 <h3 style={{ fontFamily:'Rajdhani', fontSize:18, fontWeight:700 }}>
                   Available <span style={{ color:'var(--text3)', fontWeight:400, fontSize:14 }}>({filtered.length})</span>
                 </h3>
-                <input className="input" placeholder="Search..." value={search} onChange={e => setSearch(e.target.value)} style={{ width:160, padding:'6px 10px', fontSize:12 }} />
+                <input className="input" placeholder="Search..." value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  style={{ width:160, padding:'6px 10px', fontSize:12 }} />
               </div>
-              <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(180px,1fr))', gap:7, maxHeight:400, overflowY:'auto' }} className="no-scroll">
-                {filtered.map(p => (
-                  <div key={p.id} onClick={() => startBidding(p)}
-                    style={{ background:currentPlayer?.id===p.id?'rgba(240,165,0,0.08)':'var(--navy2)', border:`1px solid ${currentPlayer?.id===p.id?'rgba(240,165,0,0.35)':'var(--border)'}`, borderRadius:10, padding:'9px 12px', cursor:'pointer', transition:'all 0.15s', display:'flex', alignItems:'center', gap:9 }}
-                    onMouseEnter={e => { if(currentPlayer?.id!==p.id){ e.currentTarget.style.background='var(--navy3)'; e.currentTarget.style.borderColor='rgba(240,165,0,0.2)' } }}
-                    onMouseLeave={e => { if(currentPlayer?.id!==p.id){ e.currentTarget.style.background='var(--navy2)'; e.currentTarget.style.borderColor='var(--border)' } }}>
-                    <div style={{ width:34, height:34, borderRadius:8, background:ROLE_BG[p.role], display:'flex', alignItems:'center', justifyContent:'center', fontSize:11, fontWeight:700, color:ROLE_TEXT[p.role], flexShrink:0 }}>
-                      {p.image_initials||p.name.slice(0,2)}
+
+              {filtered.length === 0 ? (
+                <div style={{ padding:32, textAlign:'center', background:'var(--navy2)', border:'2px dashed var(--border)', borderRadius:14, color:'var(--text3)' }}>
+                  <div style={{ fontSize:32, marginBottom:8 }}>🏏</div>
+                  <div style={{ fontFamily:'Rajdhani', fontSize:16, fontWeight:600, marginBottom:4 }}>No players available</div>
+                  <div style={{ fontSize:12 }}>All players have been sold or marked unsold</div>
+                </div>
+              ) : (
+                <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(180px,1fr))', gap:7, maxHeight:400, overflowY:'auto' }} className="no-scroll">
+                  {filtered.map(p => (
+                    <div key={p.id} onClick={() => startBidding(p)}
+                      style={{ background:currentPlayer?.id===p.id?'rgba(240,165,0,0.08)':'var(--navy2)', border:`1px solid ${currentPlayer?.id===p.id?'rgba(240,165,0,0.35)':'var(--border)'}`, borderRadius:10, padding:'9px 12px', cursor:'pointer', transition:'all 0.15s', display:'flex', alignItems:'center', gap:9 }}
+                      onMouseEnter={e => { if(currentPlayer?.id!==p.id){ e.currentTarget.style.background='var(--navy3)'; e.currentTarget.style.borderColor='rgba(240,165,0,0.2)' } }}
+                      onMouseLeave={e => { if(currentPlayer?.id!==p.id){ e.currentTarget.style.background='var(--navy2)'; e.currentTarget.style.borderColor='var(--border)' } }}>
+                      <div style={{ width:34, height:34, borderRadius:8, background:ROLE_BG[p.role], display:'flex', alignItems:'center', justifyContent:'center', fontSize:11, fontWeight:700, color:ROLE_TEXT[p.role], flexShrink:0 }}>
+                        {p.image_initials||p.name.slice(0,2)}
+                      </div>
+                      <div style={{ minWidth:0, flex:1 }}>
+                        <div style={{ fontSize:12, fontWeight:600, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{p.name}</div>
+                        <div style={{ fontSize:10, color:'var(--text3)' }}>{p.team} · ₹{p.base_price}Cr</div>
+                      </div>
+                      {currentPlayer?.id===p.id && <div style={{ width:7, height:7, borderRadius:'50%', background:'var(--gold)', flexShrink:0 }} />}
                     </div>
-                    <div style={{ minWidth:0, flex:1 }}>
-                      <div style={{ fontSize:12, fontWeight:600, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{p.name}</div>
-                      <div style={{ fontSize:10, color:'var(--text3)' }}>{p.team} · ₹{p.base_price}Cr</div>
-                    </div>
-                    {currentPlayer?.id===p.id && <div style={{ width:7, height:7, borderRadius:'50%', background:'var(--gold)', flexShrink:0 }} />}
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
 
               {unsoldPlayers.length > 0 && (
                 <div style={{ marginTop:16 }}>
@@ -569,7 +597,8 @@ export default function Auction() {
                     <h3 style={{ fontFamily:'Rajdhani', fontSize:16, fontWeight:700, color:'var(--red)' }}>
                       Unsold ({unsoldPlayers.length})
                     </h3>
-                    <button className="btn btn-ghost" style={{ fontSize:11, padding:'3px 10px', borderRadius:7 }} onClick={() => setShowUnsold(!showUnsold)}>
+                    <button className="btn btn-ghost" style={{ fontSize:11, padding:'3px 10px', borderRadius:7 }}
+                      onClick={() => setShowUnsold(!showUnsold)}>
                       {showUnsold?'Hide':'Show'}
                     </button>
                   </div>
@@ -586,7 +615,8 @@ export default function Auction() {
                               <div style={{ fontSize:10, color:'var(--text3)' }}>{p.team}</div>
                             </div>
                           </div>
-                          <button className="btn btn-teal" style={{ fontSize:10, padding:'3px 8px', flexShrink:0, borderRadius:7 }} onClick={() => reAuction(p)}>Re-bid</button>
+                          <button className="btn btn-teal" style={{ fontSize:10, padding:'3px 8px', flexShrink:0, borderRadius:7 }}
+                            onClick={() => reAuction(p)}>Re-bid</button>
                         </div>
                       ))}
                     </div>
