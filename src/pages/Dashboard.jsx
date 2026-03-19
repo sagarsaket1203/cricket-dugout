@@ -1,11 +1,16 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
+import { getSelectedLeagueId, setSelectedLeagueId as saveLeagueId } from '../lib/selectedLeague'
 
 export default function Dashboard() {
   const { profile } = useAuth()
   const [allLeagues, setAllLeagues] = useState([])
-  const [selectedLeagueId, setSelectedLeagueId] = useState(null)
+  const [selectedLeagueId, setSelectedLeagueIdState] = useState(null)
+  function setSelectedLeagueId(id) {
+  setSelectedLeagueIdState(id)
+  saveLeagueId(id)
+}
   const [members, setMembers] = useState([])
   const [league, setLeague] = useState(null)
   const [myStats, setMyStats] = useState(null)
@@ -31,7 +36,8 @@ export default function Dashboard() {
       const leagues = allMem.map(m => m.leagues).filter(Boolean)
       setAllLeagues(leagues)
       setNoLeague(false)
-      const activeId = selectedLeagueId || leagues[0]?.id
+      const savedId = getSelectedLeagueId()
+const activeId = savedId && leagues.find(l => l.id === savedId) ? savedId : leagues[0]?.id
       setSelectedLeagueId(activeId)
       await loadLeagueData(activeId)
     } catch (e) {

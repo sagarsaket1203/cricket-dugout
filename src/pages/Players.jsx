@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
+import { getSelectedLeagueId } from '../lib/selectedLeague'
 
 const ROLES = ['All', 'Batsman', 'Bowler', 'All-Rounder', 'WK-Batsman']
 const TEAMS = ['All', 'MI', 'CSK', 'RCB', 'KKR', 'RR', 'DC', 'PBKS', 'SRH', 'GT', 'LSG']
@@ -30,9 +31,10 @@ export default function Players() {
 
   async function load() {
     setLoading(true)
-    const { data: mems } = await supabase.from('league_members').select('*, leagues(*)')
+const { data: mems } = await supabase.from('league_members').select('*, leagues(*)')
   .eq('user_id', profile.id)
-const mem = mems?.[0]
+const savedId = getSelectedLeagueId()
+const mem = (savedId && mems?.find(m => m.league_id === savedId)) || mems?.[0]
     if (mem) setLeague(mem.leagues)
     const { data: allPlayers } = await supabase.from('players').select('*').order('name')
     setPlayers(allPlayers || [])

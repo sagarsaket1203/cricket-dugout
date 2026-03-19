@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
+import { getSelectedLeagueId } from '../lib/selectedLeague'
 
 const ROLE_BG = { 'Batsman':'rgba(240,165,0,0.1)','Bowler':'rgba(0,212,170,0.1)','All-Rounder':'rgba(255,71,87,0.1)','WK-Batsman':'rgba(75,159,255,0.1)' }
 const ROLE_TEXT = { 'Batsman':'var(--gold)','Bowler':'var(--teal)','All-Rounder':'var(--red)','WK-Batsman':'var(--blue)' }
@@ -35,7 +36,8 @@ export default function Trades() {
   .from('league_members').select('*, leagues(*)')
   .eq('user_id', profile.id)
 if (!mems || mems.length === 0) { setLoading(false); return }
-const mem = mems[0]
+const savedId = getSelectedLeagueId()
+const mem = (savedId && mems.find(m => m.league_id === savedId)) || mems[0]
       setLeague(mem.leagues)
       setMember(mem)
 

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
+import { getSelectedLeagueId } from '../lib/selectedLeague'
 import { calculateFantasyPoints, POINTS_GUIDE } from '../lib/fantasyPoints'
 import { fetchCurrentMatches, fetchMatchScore, parseScorecardToPerformances } from '../lib/cricapi'
 
@@ -32,7 +33,8 @@ export default function Matches() {
     try {
       const { data: mems } = await supabase.from('league_members').select('*, leagues(*)')
   .eq('user_id', profile.id)
-const mem = mems?.[0]
+const savedId = getSelectedLeagueId()
+const mem = (savedId && mems?.find(m => m.league_id === savedId)) || mems?.[0]
       if (mem) { setLeague(mem.leagues); setMember(mem) }
 
       const { data: matchData } = await supabase
