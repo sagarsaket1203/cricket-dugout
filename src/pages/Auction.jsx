@@ -510,7 +510,7 @@ export default function Auction() {
             </div>
 
             <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:8, marginBottom:8 }}>
-             {[{ inc:0.5,label:'Quick' },{ inc:1,label:'Raise' },{ inc:2,label:'Power' }].map(({ inc, label }) => {
+             {[{ inc:1,label:'Quick' },{ inc:2,label:'Raise' },{ inc:3,label:'Power' }].map(({ inc, label }) => {
   const amt = currentBid + inc
                 const canBid = member?.purse_remaining >= amt && !isMyBid && !bidding
                 return (
