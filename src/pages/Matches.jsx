@@ -1,40 +1,43 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
-import { getSelectedLeagueId } from '../lib/selectedLeague'
 import { calculateFantasyPoints, POINTS_GUIDE } from '../lib/fantasyPoints'
-import { fetchCurrentMatches, fetchMatchScore, parseScorecardToPerformances } from '../lib/cricapi'
+import { getSelectedLeagueId } from '../lib/selectedLeague'
 
 export default function Matches() {
   const { profile } = useAuth()
   const [matches, setMatches] = useState([])
-  const [liveMatches, setLiveMatches] = useState([])
   const [matchPoints, setMatchPoints] = useState({})
   const [performances, setPerformances] = useState({})
   const [mySquadIds, setMySquadIds] = useState(new Set())
   const [league, setLeague] = useState(null)
   const [players, setPlayers] = useState({})
   const [loading, setLoading] = useState(true)
-  const [syncing, setSyncing] = useState(false)
   const [showGuide, setShowGuide] = useState(false)
-  const [syncMsg, setSyncMsg] = useState('')
   const [member, setMember] = useState(null)
+  const [showAddMatch, setShowAddMatch] = useState(false)
+  const [showAddPerf, setShowAddPerf] = useState(null)
+  const [msg, setMsg] = useState('')
+  const [msgType, setMsgType] = useState('success')
+  const [allPlayers, setAllPlayers] = useState([])
+
+  // Add match form
+  const [newMatch, setNewMatch] = useState({ team1:'', team2:'', venue:'', match_date:'', status:'completed' })
+  // Add performance form
+  const [perfForm, setPerfForm] = useState({ player_id:'', runs:0, balls:0, fours:0, sixes:0, wickets:0, overs:0, maidens:0, runsConceded:0, catches:0, stumpings:0, runOuts:0, dismissalType:'' })
+
+  const TEAMS = ['MI','CSK','RCB','KKR','RR','DC','PBKS','SRH','GT','LSG']
 
   useEffect(() => { if (profile) load() }, [profile])
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (liveMatches.length > 0) fetchLive()
-    }, 120000)
-    return () => clearInterval(interval)
-  }, [liveMatches])
 
   async function load() {
     setLoading(true)
     try {
-      const { data: mems } = await supabase.from('league_members').select('*, leagues(*)')
-  .eq('user_id', profile.id)
-const savedId = getSelectedLeagueId()
-const mem = (savedId && mems?.find(m => m.league_id === savedId)) || mems?.[0]
+      const { data: mems } = await supabase
+        .from('league_members').select('*, leagues(*)')
+        .eq('user_id', profile.id)
+      const savedId = getSelectedLeagueId()
+      const mem = (savedId && mems?.find(m => m.league_id === savedId)) || mems?.[0]
       if (mem) { setLeague(mem.leagues); setMember(mem) }
 
       const { data: matchData } = await supabase
@@ -45,14 +48,12 @@ const mem = (savedId && mems?.find(m => m.league_id === savedId)) || mems?.[0]
       if (mem) {
         const { data: squadData } = await supabase
           .from('squad').select('player_id')
-          .eq('league_id', mem.league_id)
-          .eq('user_id', profile.id)
+          .eq('league_id', mem.league_id).eq('user_id', profile.id)
         setMySquadIds(new Set(squadData?.map(s => s.player_id) || []))
 
         const { data: pts } = await supabase
           .from('match_points').select('*')
-          .eq('league_id', mem.league_id)
-          .eq('user_id', profile.id)
+          .eq('league_id', mem.league_id).eq('user_id', profile.id)
         const ptsMap = {}
         pts?.forEach(p => { ptsMap[p.match_id] = p.total_points })
         setMatchPoints(ptsMap)
@@ -67,135 +68,93 @@ const mem = (savedId && mems?.find(m => m.league_id === savedId)) || mems?.[0]
         setPerformances(perfMap)
       }
 
-      const { data: playerData } = await supabase
-        .from('players').select('id,name,role')
+      const { data: playerData } = await supabase.from('players').select('*').order('name')
       const pm = {}
       playerData?.forEach(p => { pm[p.id] = p })
       setPlayers(pm)
-
-      await fetchLive()
-    } catch (e) {
-      console.error('Matches load error:', e)
-    }
+      setAllPlayers(playerData || [])
+    } catch (e) { console.error(e) }
     setLoading(false)
   }
 
-  async function fetchLive() {
-    try {
-      const live = await fetchCurrentMatches()
-      setLiveMatches(live)
-    } catch (e) {
-      console.log('Live fetch skipped')
-    }
+  function showMsg(text, type = 'success') {
+    setMsg(text); setMsgType(type)
+    setTimeout(() => setMsg(''), 4000)
   }
 
-  async function syncIPLMatches() {
-    setSyncing(true)
-    setSyncMsg('Fetching IPL matches from CricAPI...')
-    try {
-      const live = await fetchCurrentMatches()
-      if (live.length === 0) {
-        setSyncMsg('No IPL matches found right now. IPL 2026 starts 28 March — try again on or after that date!')
-        setSyncing(false)
-        return
-      }
-      let added = 0
-      for (const m of live) {
-        const team1 = shortenTeam(m.teamInfo?.[0]?.name || m.teams?.[0] || 'TBD')
-        const team2 = shortenTeam(m.teamInfo?.[1]?.name || m.teams?.[1] || 'TBD')
-        const status = m.matchStarted && !m.matchEnded ? 'live' : m.matchEnded ? 'completed' : 'upcoming'
-        const { data: existing } = await supabase
-          .from('matches').select('id')
-          .eq('cricapi_id', m.id).maybeSingle()
-        if (!existing) {
-          await supabase.from('matches').insert({
-            team1, team2,
-            match_date: m.dateTimeGMT || m.date,
-            venue: m.venue || '',
-            status,
-            cricapi_id: m.id
-          })
-          added++
+  async function addMatch() {
+    if (!newMatch.team1 || !newMatch.team2) { showMsg('Select both teams!', 'error'); return }
+    const { error } = await supabase.from('matches').insert({
+      team1: newMatch.team1, team2: newMatch.team2,
+      venue: newMatch.venue, match_date: newMatch.match_date || new Date().toISOString(),
+      status: newMatch.status
+    })
+    if (error) { showMsg('Error: ' + error.message, 'error'); return }
+    showMsg('Match added!')
+    setShowAddMatch(false)
+    setNewMatch({ team1:'', team2:'', venue:'', match_date:'', status:'completed' })
+    load()
+  }
+
+  async function deleteMatch(matchId) {
+    if (!confirm('Delete this match and all its performances?')) return
+    await supabase.from('match_points').delete().eq('match_id', matchId)
+    await supabase.from('performances').delete().eq('match_id', matchId)
+    await supabase.from('matches').delete().eq('id', matchId)
+    showMsg('Match deleted.')
+    load()
+  }
+
+  async function addPerformance() {
+    if (!perfForm.player_id) { showMsg('Select a player!', 'error'); return }
+    if (!showAddPerf) return
+
+    const perf = {
+      runs: parseInt(perfForm.runs) || 0,
+      balls: parseInt(perfForm.balls) || 0,
+      fours: parseInt(perfForm.fours) || 0,
+      sixes: parseInt(perfForm.sixes) || 0,
+      wickets: parseInt(perfForm.wickets) || 0,
+      overs: parseFloat(perfForm.overs) || 0,
+      maidens: parseInt(perfForm.maidens) || 0,
+      runsConceded: parseInt(perfForm.runsConceded) || 0,
+      catches: parseInt(perfForm.catches) || 0,
+      stumpings: parseInt(perfForm.stumpings) || 0,
+      runOuts: parseInt(perfForm.runOuts) || 0,
+      dismissalType: perfForm.dismissalType || '',
+    }
+
+    const { points } = calculateFantasyPoints(perf)
+
+    await supabase.from('performances').upsert({
+      match_id: showAddPerf, player_id: perfForm.player_id, ...perf, fantasy_points: points
+    }, { onConflict: 'match_id,player_id' })
+
+    // Update match points for all leagues
+    if (league) {
+      const { data: sq } = await supabase.from('squad').select('user_id, league_id')
+        .eq('player_id', perfForm.player_id)
+      for (const s of sq || []) {
+        const { data: ex } = await supabase.from('match_points').select('*')
+          .eq('match_id', showAddPerf).eq('user_id', s.user_id).eq('league_id', s.league_id).maybeSingle()
+        if (ex) {
+          await supabase.from('match_points').update({ total_points: ex.total_points + points }).eq('id', ex.id)
         } else {
-          await supabase.from('matches').update({ status }).eq('cricapi_id', m.id)
+          await supabase.from('match_points').insert({
+            match_id: showAddPerf, user_id: s.user_id, league_id: s.league_id, total_points: points
+          })
         }
       }
-      setSyncMsg(`✅ Synced! ${added} new matches added. ${live.length} IPL matches found.`)
-      load()
-    } catch (e) {
-      setSyncMsg('Error: ' + e.message)
     }
-    setSyncing(false)
+
+    showMsg(`${players[perfForm.player_id]?.name} — +${points} pts added!`)
+    setPerfForm({ player_id:'', runs:0, balls:0, fours:0, sixes:0, wickets:0, overs:0, maidens:0, runsConceded:0, catches:0, stumpings:0, runOuts:0, dismissalType:'' })
+    load()
   }
 
-  async function syncMatchPoints(match) {
-    if (!match.cricapi_id) {
-      setSyncMsg('No CricAPI ID — sync matches first.')
-      return
-    }
-    setSyncing(true)
-    setSyncMsg(`Fetching scorecard for ${match.team1} vs ${match.team2}...`)
-    try {
-      const scorecard = await fetchMatchScore(match.cricapi_id)
-      if (!scorecard) {
-        setSyncMsg('Scorecard not available yet. Try after match ends.')
-        setSyncing(false)
-        return
-      }
-      const perfs = parseScorecardToPerformances(scorecard)
-      let pointsAdded = 0
-      for (const perf of perfs) {
-        const lastName = perf.playerName.split(' ').pop()
-        const { data: playerRows } = await supabase
-          .from('players').select('id,name')
-          .ilike('name', `%${lastName}%`)
-        if (!playerRows?.length) continue
-        const player = playerRows.find(p =>
-          p.name.toLowerCase().includes(perf.playerName.toLowerCase().split(' ')[0])
-        ) || playerRows[0]
-        const { points } = calculateFantasyPoints(perf)
-        await supabase.from('performances').upsert({
-          match_id: match.id, player_id: player.id,
-          ...perf, fantasy_points: points
-        }, { onConflict: 'match_id,player_id' })
-        if (league) {
-          const { data: sq } = await supabase.from('squad').select('user_id')
-            .eq('player_id', player.id).eq('league_id', league.id).maybeSingle()
-          if (sq) {
-            const { data: ex } = await supabase.from('match_points').select('*')
-              .eq('match_id', match.id).eq('user_id', sq.user_id)
-              .eq('league_id', league.id).maybeSingle()
-            if (ex) {
-              await supabase.from('match_points')
-                .update({ total_points: ex.total_points + points }).eq('id', ex.id)
-            } else {
-              await supabase.from('match_points').insert({
-                match_id: match.id, user_id: sq.user_id,
-                league_id: league.id, total_points: points
-              })
-            }
-            pointsAdded += points
-          }
-        }
-      }
-      setSyncMsg(`✅ Done! ${perfs.length} performances synced. +${pointsAdded} fantasy pts.`)
-      load()
-    } catch (e) {
-      setSyncMsg('Error: ' + e.message)
-    }
-    setSyncing(false)
-  }
-
-  function shortenTeam(name) {
-    const map = {
-      'mumbai indians':'MI','chennai super kings':'CSK',
-      'royal challengers bengaluru':'RCB','royal challengers bangalore':'RCB',
-      'kolkata knight riders':'KKR','rajasthan royals':'RR',
-      'delhi capitals':'DC','punjab kings':'PBKS',
-      'sunrisers hyderabad':'SRH','gujarat titans':'GT',
-      'lucknow super giants':'LSG'
-    }
-    return map[name?.toLowerCase()] || name
+  async function updateMatchStatus(matchId, status) {
+    await supabase.from('matches').update({ status }).eq('id', matchId)
+    load()
   }
 
   const totalPts = Object.values(matchPoints).reduce((a, b) => a + b, 0)
@@ -215,90 +174,78 @@ const mem = (savedId && mems?.find(m => m.league_id === savedId)) || mems?.[0]
           <div>
             <div style={{ fontSize:11, color:'var(--text3)', textTransform:'uppercase', letterSpacing:'1px', fontWeight:600, marginBottom:4 }}>Season 2026</div>
             <h1 style={{ fontFamily:'Rajdhani', fontSize:'clamp(24px,5vw,36px)', fontWeight:700, marginBottom:4 }}>IPL Matches</h1>
-            <div style={{ color:'var(--text2)', fontSize:13 }}>Auto-synced · Points update after each match</div>
+            <div style={{ color:'var(--text2)', fontSize:13 }}>Add matches manually · Points auto-calculated</div>
           </div>
           <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
             <div style={{ padding:'8px 14px', background:'rgba(240,165,0,0.08)', border:'1px solid rgba(240,165,0,0.2)', borderRadius:10 }}>
               <div style={{ fontSize:9, color:'var(--text3)', textTransform:'uppercase', letterSpacing:'0.8px' }}>Your Total</div>
               <div style={{ fontFamily:'Rajdhani', fontSize:22, fontWeight:700, color:'var(--gold)', lineHeight:1.1 }}>{totalPts.toLocaleString()} pts</div>
             </div>
-            <button className="btn btn-teal" onClick={syncIPLMatches} disabled={syncing} style={{ fontSize:13 }}>
-              {syncing ? '⟳ Syncing...' : '🔄 Sync'}
-            </button>
+            {member?.is_admin && (
+              <button className="btn btn-primary" onClick={() => setShowAddMatch(!showAddMatch)} style={{ fontSize:13 }}>
+                {showAddMatch ? '✕ Cancel' : '+ Add Match'}
+              </button>
+            )}
             <button className="btn btn-ghost" onClick={() => setShowGuide(!showGuide)} style={{ fontSize:13 }}>
-              📋 Guide
+              📋 Points Guide
             </button>
           </div>
         </div>
       </div>
 
-      {/* Sync message */}
-      {syncMsg && (
-        <div style={{ padding:'10px 14px', background:syncMsg.includes('Error')?'var(--red2)':'var(--teal2)', border:`1px solid ${syncMsg.includes('Error')?'rgba(255,71,87,0.3)':'rgba(0,212,170,0.3)'}`, borderRadius:10, marginBottom:14, color:syncMsg.includes('Error')?'var(--red)':'var(--teal)', fontSize:13, fontWeight:500 }}>
-          {syncMsg}
+      {/* Message */}
+      {msg && (
+        <div style={{ padding:'10px 14px', background:msgType==='error'?'var(--red2)':'var(--teal2)', border:`1px solid ${msgType==='error'?'rgba(255,71,87,0.3)':'rgba(0,212,170,0.3)'}`, borderRadius:10, marginBottom:14, color:msgType==='error'?'var(--red)':'var(--teal)', fontSize:13, fontWeight:500 }}>
+          {msg}
         </div>
       )}
 
-      {/* Live matches from API */}
-      {liveMatches.length > 0 && (
-        <div style={{ marginBottom:24 }}>
-          <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:12 }}>
-            <div className="live-dot" />
-            <h2 style={{ fontFamily:'Rajdhani', fontSize:18, fontWeight:700 }}>Live Now</h2>
+      {/* Add Match Form */}
+      {showAddMatch && member?.is_admin && (
+        <div className="fade-in" style={{ background:'var(--navy2)', border:'1px solid var(--border2)', borderRadius:16, padding:20, marginBottom:20 }}>
+          <h3 style={{ fontFamily:'Rajdhani', fontSize:18, fontWeight:700, marginBottom:16 }}>Add IPL Match</h3>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(160px,1fr))', gap:10, marginBottom:14 }}>
+            <div>
+              <div style={{ fontSize:11, color:'var(--text3)', marginBottom:4 }}>Team 1</div>
+              <select className="input" value={newMatch.team1} onChange={e => setNewMatch({...newMatch, team1:e.target.value})} style={{ padding:'8px 10px', fontSize:13 }}>
+                <option value="">Select team</option>
+                {TEAMS.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+            <div>
+              <div style={{ fontSize:11, color:'var(--text3)', marginBottom:4 }}>Team 2</div>
+              <select className="input" value={newMatch.team2} onChange={e => setNewMatch({...newMatch, team2:e.target.value})} style={{ padding:'8px 10px', fontSize:13 }}>
+                <option value="">Select team</option>
+                {TEAMS.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+            <div>
+              <div style={{ fontSize:11, color:'var(--text3)', marginBottom:4 }}>Venue</div>
+              <input className="input" placeholder="Stadium" value={newMatch.venue} onChange={e => setNewMatch({...newMatch, venue:e.target.value})} style={{ padding:'8px 10px', fontSize:13 }} />
+            </div>
+            <div>
+              <div style={{ fontSize:11, color:'var(--text3)', marginBottom:4 }}>Date</div>
+              <input className="input" type="date" value={newMatch.match_date} onChange={e => setNewMatch({...newMatch, match_date:e.target.value})} style={{ padding:'8px 10px', fontSize:13 }} />
+            </div>
+            <div>
+              <div style={{ fontSize:11, color:'var(--text3)', marginBottom:4 }}>Status</div>
+              <select className="input" value={newMatch.status} onChange={e => setNewMatch({...newMatch, status:e.target.value})} style={{ padding:'8px 10px', fontSize:13 }}>
+                <option value="completed">Completed</option>
+                <option value="live">Live</option>
+                <option value="upcoming">Upcoming</option>
+              </select>
+            </div>
           </div>
-          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(280px,1fr))', gap:10 }}>
-            {liveMatches.map(m => (
-              <div key={m.id} style={{ background:'linear-gradient(135deg, rgba(255,71,87,0.08), var(--navy2))', border:'1px solid rgba(255,71,87,0.2)', borderRadius:14, padding:16 }}>
-                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:10 }}>
-                  <div>
-                    <div style={{ fontFamily:'Rajdhani', fontSize:16, fontWeight:700, marginBottom:2 }}>{m.name}</div>
-                    <div style={{ fontSize:11, color:'var(--text3)' }}>{m.venue}</div>
-                  </div>
-                  <div style={{ display:'flex', alignItems:'center', gap:4, background:'var(--red2)', border:'1px solid rgba(255,71,87,0.3)', borderRadius:20, padding:'3px 8px', flexShrink:0 }}>
-                    <div className="live-dot" style={{ width:5, height:5 }} />
-                    <span style={{ fontSize:10, fontWeight:700, color:'var(--red)' }}>LIVE</span>
-                  </div>
-                </div>
-                {m.score?.map((s, i) => (
-                  <div key={i} style={{ fontFamily:'Rajdhani', fontSize:14, color:'var(--text2)', marginBottom:2 }}>
-                    {s.inning}: <span style={{ color:'var(--gold)', fontWeight:700 }}>{s.r}/{s.w}</span> ({s.o} ov)
-                  </div>
-                ))}
-                <div style={{ marginTop:8, fontSize:11, color:'var(--teal)' }}>{m.status}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* No matches yet - IPL not started */}
-      {matches.length === 0 && (
-        <div style={{ padding:36, textAlign:'center', marginBottom:20, background:'linear-gradient(135deg, rgba(240,165,0,0.05), var(--navy2))', border:'1px solid rgba(240,165,0,0.15)', borderRadius:18 }}>
-          <div style={{ fontSize:52, marginBottom:14 }}>🏏</div>
-          <h2 style={{ fontFamily:'Rajdhani', fontSize:26, fontWeight:700, marginBottom:8 }}>
-            IPL 2026 — Ready to Sync!
-          </h2>
-          <div style={{ color:'var(--text2)', fontSize:14, marginBottom:6, lineHeight:1.7 }}>
-            IPL 2026 starts <span style={{ color:'var(--gold)', fontWeight:700 }}>28 March 2026</span>.<br />
-            Once matches begin, click Sync to pull all live data automatically.
-          </div>
-          <div style={{ fontSize:12, color:'var(--text3)', marginBottom:24, padding:'8px 16px', background:'var(--navy3)', borderRadius:10, display:'inline-block' }}>
-            🤖 CricAPI will detect all IPL 2026 matches automatically — no manual setup needed
-          </div>
-          <div>
-            <button className="btn btn-primary" onClick={syncIPLMatches} disabled={syncing} style={{ padding:'12px 28px', fontSize:15 }}>
-              {syncing ? '⟳ Syncing...' : '🔄 Sync IPL Matches'}
-            </button>
-          </div>
+          <button className="btn btn-primary" onClick={addMatch} style={{ fontSize:13, padding:'8px 20px' }}>
+            Add Match
+          </button>
         </div>
       )}
 
       {/* Points guide */}
       {showGuide && (
         <div className="fade-in card" style={{ padding:20, marginBottom:20 }}>
-          <h3 style={{ fontFamily:'Rajdhani', fontSize:18, fontWeight:700, marginBottom:14, color:'var(--gold)' }}>
-            Fantasy Points System
-          </h3>
+          <h3 style={{ fontFamily:'Rajdhani', fontSize:18, fontWeight:700, marginBottom:14, color:'var(--gold)' }}>Fantasy Points System</h3>
           <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(200px,1fr))', gap:6 }}>
             {POINTS_GUIDE.map((g, i) => (
               <div key={i} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'7px 10px', background:'var(--navy3)', borderRadius:8, border:'1px solid var(--border)' }}>
@@ -310,23 +257,117 @@ const mem = (savedId && mems?.find(m => m.league_id === savedId)) || mems?.[0]
         </div>
       )}
 
+      {/* No matches */}
+      {matches.length === 0 && (
+        <div style={{ padding:36, textAlign:'center', marginBottom:20, background:'linear-gradient(135deg, rgba(240,165,0,0.05), var(--navy2))', border:'1px solid rgba(240,165,0,0.15)', borderRadius:18 }}>
+          <div style={{ fontSize:48, marginBottom:12 }}>🏏</div>
+          <h2 style={{ fontFamily:'Rajdhani', fontSize:24, fontWeight:700, marginBottom:8 }}>IPL 2026 has started!</h2>
+          <div style={{ color:'var(--text2)', fontSize:14, marginBottom:20, lineHeight:1.7 }}>
+            RCB beat SRH by 6 wickets in the opener.<br />
+            Admin can add matches manually using the <strong style={{ color:'var(--gold)' }}>+ Add Match</strong> button above.
+          </div>
+          {member?.is_admin && (
+            <button className="btn btn-primary" onClick={() => setShowAddMatch(true)} style={{ padding:'12px 28px', fontSize:15 }}>
+              + Add First Match
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Add Performance Panel */}
+      {showAddPerf && member?.is_admin && (
+        <div className="fade-in" style={{ background:'var(--navy2)', border:'1px solid rgba(0,212,170,0.2)', borderRadius:16, padding:20, marginBottom:20 }}>
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16 }}>
+            <h3 style={{ fontFamily:'Rajdhani', fontSize:18, fontWeight:700, color:'var(--teal)' }}>
+              Add Player Performance
+            </h3>
+            <button onClick={() => setShowAddPerf(null)} style={{ background:'none', border:'none', color:'var(--text3)', cursor:'pointer', fontSize:18 }}>✕</button>
+          </div>
+
+          <div style={{ marginBottom:12 }}>
+            <div style={{ fontSize:11, color:'var(--text3)', marginBottom:4 }}>Select Player</div>
+            <select className="input" value={perfForm.player_id} onChange={e => setPerfForm({...perfForm, player_id:e.target.value})} style={{ padding:'8px 10px', fontSize:13 }}>
+              <option value="">-- Select Player --</option>
+              {allPlayers.map(p => <option key={p.id} value={p.id}>{p.name} ({p.team})</option>)}
+            </select>
+          </div>
+
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(110px,1fr))', gap:8, marginBottom:14 }}>
+            {[
+              { key:'runs', label:'Runs' },
+              { key:'balls', label:'Balls' },
+              { key:'fours', label:'4s' },
+              { key:'sixes', label:'6s' },
+              { key:'wickets', label:'Wickets' },
+              { key:'overs', label:'Overs' },
+              { key:'runsConceded', label:'Runs Given' },
+              { key:'maidens', label:'Maidens' },
+              { key:'catches', label:'Catches' },
+              { key:'stumpings', label:'Stumpings' },
+              { key:'runOuts', label:'Run Outs' },
+            ].map(f => (
+              <div key={f.key}>
+                <div style={{ fontSize:10, color:'var(--text3)', marginBottom:3 }}>{f.label}</div>
+                <input className="input" type="number" min={0} value={perfForm[f.key]}
+                  onChange={e => setPerfForm({...perfForm, [f.key]: e.target.value})}
+                  style={{ padding:'6px 8px', fontSize:13, textAlign:'center' }} />
+              </div>
+            ))}
+          </div>
+
+          <div style={{ marginBottom:14 }}>
+            <div style={{ fontSize:11, color:'var(--text3)', marginBottom:4 }}>Dismissal Type (optional)</div>
+            <select className="input" value={perfForm.dismissalType} onChange={e => setPerfForm({...perfForm, dismissalType:e.target.value})} style={{ padding:'8px 10px', fontSize:13, width:'auto' }}>
+              <option value="">Not out / N/A</option>
+              <option value="bowled">Bowled</option>
+              <option value="lbw">LBW</option>
+              <option value="caught">Caught</option>
+              <option value="run out">Run Out</option>
+              <option value="stumped">Stumped</option>
+            </select>
+          </div>
+
+          {/* Points preview */}
+          {perfForm.player_id && (
+            <div style={{ padding:'10px 14px', background:'rgba(240,165,0,0.06)', border:'1px solid rgba(240,165,0,0.2)', borderRadius:10, marginBottom:14, fontSize:13 }}>
+              <span style={{ color:'var(--text2)' }}>Fantasy Points: </span>
+              <span style={{ fontFamily:'Rajdhani', fontSize:18, fontWeight:700, color:'var(--gold)' }}>
+                +{calculateFantasyPoints({
+                  runs: parseInt(perfForm.runs)||0, balls: parseInt(perfForm.balls)||0,
+                  fours: parseInt(perfForm.fours)||0, sixes: parseInt(perfForm.sixes)||0,
+                  wickets: parseInt(perfForm.wickets)||0, overs: parseFloat(perfForm.overs)||0,
+                  runsConceded: parseInt(perfForm.runsConceded)||0, maidens: parseInt(perfForm.maidens)||0,
+                  catches: parseInt(perfForm.catches)||0, stumpings: parseInt(perfForm.stumpings)||0,
+                  runOuts: parseInt(perfForm.runOuts)||0, dismissalType: perfForm.dismissalType
+                }).points} pts
+              </span>
+            </div>
+          )}
+
+          <button className="btn btn-teal" onClick={addPerformance} style={{ fontSize:13, padding:'10px 24px' }}>
+            ✓ Save Performance
+          </button>
+        </div>
+      )}
+
       {/* Match cards */}
       {matches.length > 0 && (
         <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(300px,1fr))', gap:12 }}>
           {matches.map(m => {
             const myPts = matchPoints[m.id] || 0
             const matchPerfs = (performances[m.id] || []).filter(p => mySquadIds.has(p.player_id))
+            const allPerfs = performances[m.id] || []
             const isLive = m.status === 'live'
             const isDone = m.status === 'completed'
-            const statusColor = isLive ? 'var(--red)' : isDone ? 'var(--teal)' : 'var(--text3)'
-            const statusBg = isLive ? 'var(--red2)' : isDone ? 'var(--teal2)' : 'var(--navy4)'
+            const statusColor = isLive?'var(--red)':isDone?'var(--teal)':'var(--text3)'
+            const statusBg = isLive?'var(--red2)':isDone?'var(--teal2)':'var(--navy4)'
 
             return (
               <div key={m.id} style={{ background:'var(--navy2)', border:'1px solid var(--border)', borderRadius:14, overflow:'hidden', transition:'all 0.2s' }}
-                onMouseEnter={e => { e.currentTarget.style.borderColor='var(--border2)'; e.currentTarget.style.transform='translateY(-1px)' }}
-                onMouseLeave={e => { e.currentTarget.style.borderColor='var(--border)'; e.currentTarget.style.transform='translateY(0)' }}>
+                onMouseEnter={e => { e.currentTarget.style.borderColor='var(--border2)' }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor='var(--border)' }}>
 
-                {/* Match header */}
+                {/* Header */}
                 <div style={{ background:'var(--navy3)', padding:'12px 14px', display:'flex', alignItems:'center', justifyContent:'space-between', borderBottom:'1px solid var(--border)' }}>
                   <div style={{ minWidth:0, flex:1 }}>
                     <div style={{ fontFamily:'Rajdhani', fontSize:18, fontWeight:700 }}>{m.team1} vs {m.team2}</div>
@@ -341,16 +382,16 @@ const mem = (savedId && mems?.find(m => m.league_id === savedId)) || mems?.[0]
                     </div>
                     <div style={{ display:'inline-flex', alignItems:'center', gap:3, padding:'2px 7px', borderRadius:20, background:statusBg, marginTop:2 }}>
                       {isLive && <div className="live-dot" style={{ width:5, height:5 }} />}
-                      <span style={{ fontSize:9, color:statusColor, fontWeight:700, textTransform:'uppercase', letterSpacing:'0.5px' }}>{m.status}</span>
+                      <span style={{ fontSize:9, color:statusColor, fontWeight:700, textTransform:'uppercase' }}>{m.status}</span>
                     </div>
                   </div>
                 </div>
 
-                {/* Performances */}
+                {/* My squad performances */}
                 {matchPerfs.length > 0 ? (
                   <>
                     {matchPerfs.slice(0, 3).map(p => {
-                      const { points, breakdown } = calculateFantasyPoints(p)
+                      const { points } = calculateFantasyPoints(p)
                       return (
                         <div key={p.id} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'9px 14px', borderBottom:'1px solid var(--border)' }}>
                           <div style={{ minWidth:0, flex:1 }}>
@@ -362,9 +403,6 @@ const mem = (savedId && mems?.find(m => m.league_id === savedId)) || mems?.[0]
                               {p.runs > 0 && p.wickets > 0 && ' · '}
                               {p.wickets > 0 && `${p.wickets}w`}
                               {p.catches > 0 && ` · ${p.catches}c`}
-                            </div>
-                            <div style={{ fontSize:10, color:'var(--text3)', marginTop:1 }}>
-                              {breakdown.slice(0,2).map(b => `${b.label}(${b.pts>0?'+':''}${b.pts})`).join(' · ')}
                             </div>
                           </div>
                           <div style={{ fontFamily:'Rajdhani', fontSize:20, fontWeight:700, color:points>=0?'var(--teal)':'var(--red)', flexShrink:0, marginLeft:10 }}>
@@ -380,31 +418,43 @@ const mem = (savedId && mems?.find(m => m.league_id === savedId)) || mems?.[0]
                     )}
                   </>
                 ) : (
-                  <div style={{ padding:16, color:'var(--text3)', fontSize:13, textAlign:'center' }}>
-                    {m.status === 'upcoming' ? (
-                      <div>
-                        <div style={{ fontSize:20, marginBottom:4 }}>📅</div>
-                        <div>Match not played yet</div>
-                      </div>
-                    ) : (
-                      <div>
-                        <div style={{ marginBottom:10 }}>Scorecard not synced yet</div>
-                        {member?.is_admin && (
-                          <button className="btn btn-teal" style={{ fontSize:12, padding:'5px 12px' }}
-                            onClick={() => syncMatchPoints(m)} disabled={syncing}>
-                            🔄 Sync Scorecard
-                          </button>
-                        )}
-                      </div>
-                    )}
+                  <div style={{ padding:14, color:'var(--text3)', fontSize:13, textAlign:'center' }}>
+                    {m.status === 'upcoming' ? '📅 Upcoming match' : 'No performances from your squad'}
                   </div>
                 )}
 
-                {/* Match total */}
+                {/* Total */}
                 {myPts > 0 && (
                   <div style={{ padding:'8px 14px', background:'rgba(240,165,0,0.04)', display:'flex', justifyContent:'space-between', alignItems:'center', borderTop:'1px solid rgba(240,165,0,0.1)' }}>
                     <span style={{ fontSize:11, color:'var(--text3)' }}>Your total this match</span>
                     <span style={{ fontFamily:'Rajdhani', fontSize:16, fontWeight:700, color:'var(--gold)' }}>+{myPts} pts</span>
+                  </div>
+                )}
+
+                {/* All performances count */}
+                {allPerfs.length > 0 && (
+                  <div style={{ padding:'6px 14px', background:'var(--navy3)', borderTop:'1px solid var(--border)', fontSize:11, color:'var(--text3)' }}>
+                    {allPerfs.length} player performances recorded
+                  </div>
+                )}
+
+                {/* Admin controls */}
+                {member?.is_admin && (
+                  <div style={{ padding:'8px 14px', borderTop:'1px solid var(--border)', display:'flex', gap:6, flexWrap:'wrap' }}>
+                    <button className="btn btn-teal" style={{ fontSize:11, padding:'4px 12px', borderRadius:8 }}
+                      onClick={() => setShowAddPerf(showAddPerf === m.id ? null : m.id)}>
+                      + Add Performance
+                    </button>
+                    <select value={m.status} onChange={e => updateMatchStatus(m.id, e.target.value)}
+                      style={{ fontSize:11, padding:'4px 8px', borderRadius:8, background:'var(--navy4)', border:'1px solid var(--border)', color:'var(--text2)', cursor:'pointer' }}>
+                      <option value="upcoming">Upcoming</option>
+                      <option value="live">Live</option>
+                      <option value="completed">Completed</option>
+                    </select>
+                    <button onClick={() => deleteMatch(m.id)}
+                      style={{ fontSize:11, padding:'4px 8px', borderRadius:8, border:'1px solid rgba(255,71,87,0.25)', background:'var(--red2)', color:'var(--red)', cursor:'pointer' }}>
+                      Delete
+                    </button>
                   </div>
                 )}
               </div>
