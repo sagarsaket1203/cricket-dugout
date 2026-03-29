@@ -28,6 +28,15 @@ export default function Matches() {
   const [savingPerfs, setSavingPerfs] = useState(false)
   const fileRef = useRef(null)
 
+  // Manual scorecard input
+  const [showManualInput, setShowManualInput] = useState(false)
+  const [manualScorecard, setManualScorecard] = useState({
+    match_id: null,
+    batting: '',
+    bowling: '',
+    fielding: ''
+  })
+
   const TEAMS = ['MI','CSK','RCB','KKR','RR','DC','PBKS','SRH','GT','LSG']
 
   useEffect(() => { if (profile) load() }, [profile])
@@ -106,6 +115,122 @@ export default function Matches() {
     await supabase.from('matches').delete().eq('id', matchId)
     showMsg('Match deleted.')
     load()
+  }
+
+  function findPlayer(name) {
+    if (!name) return null
+    const lower = name.toLowerCase().trim()
+    // Exact match
+    let found = allPlayers.find(p => p.name.toLowerCase() === lower)
+    if (found) return found
+    // Last name match
+    const parts = lower.split(' ')
+    const lastName = parts[parts.length - 1]
+    found = allPlayers.find(p => p.name.toLowerCase().includes(lastName) && lastName.length > 3)
+    if (found) return found
+    // First name match
+    const firstName = parts[0]
+    found = allPlayers.find(p => p.name.toLowerCase().startsWith(firstName) && firstName.length > 3)
+    return found || null
+  }
+
+  // Parse manual scorecard input
+  function parseManualScorecard() {
+    const { batting, bowling, fielding, match_id } = manualScorecard
+    
+    if (!match_id) {
+      showMsg('Select a match first!', 'error')
+      return
+    }
+
+    const matched = []
+
+    // Parse batting
+    if (batting.trim()) {
+      batting.split('\n').forEach(line => {
+        const parts = line.split(',').map(p => p.trim()).filter(p => p)
+        if (parts.length >= 2 && parts[0]) {
+          const playerName = parts[0]
+          const dbPlayer = findPlayer(playerName)
+          matched.push({
+            playerName,
+            player_id: dbPlayer?.id || null,
+            dbName: dbPlayer?.name || null,
+            team: dbPlayer?.team || null,
+            runs: parseInt(parts[1]) || 0,
+            balls: parseInt(parts[2]) || 0,
+            fours: parseInt(parts[3]) || 0,
+            sixes: parseInt(parts[4]) || 0,
+            dismissalType: parts[5] || '',
+            wickets: 0, overs: 0, maidens: 0, runsConceded: 0,
+            catches: 0, stumpings: 0, runOuts: 0,
+            type: 'batting',
+            include: true
+          })
+        }
+      })
+    }
+
+    // Parse bowling
+    if (bowling.trim()) {
+      bowling.split('\n').forEach(line => {
+        const parts = line.split(',').map(p => p.trim()).filter(p => p)
+        if (parts.length >= 2 && parts[0]) {
+          const playerName = parts[0]
+          const dbPlayer = findPlayer(playerName)
+          const existing = matched.find(m => m.playerName === playerName || (dbPlayer && m.player_id === dbPlayer.id))
+          
+          if (existing) {
+            existing.overs = parseFloat(parts[1]) || 0
+            existing.maidens = parseInt(parts[2]) || 0
+            existing.runsConceded = parseInt(parts[3]) || 0
+            existing.wickets = parseInt(parts[4]) || 0
+          } else {
+            matched.push({
+              playerName,
+              player_id: dbPlayer?.id || null,
+              dbName: dbPlayer?.name || null,
+              team: dbPlayer?.team || null,
+              runs: 0, balls: 0, fours: 0, sixes: 0, dismissalType: '',
+              wickets: parseInt(parts[4]) || 0,
+              overs: parseFloat(parts[1]) || 0,
+              maidens: parseInt(parts[2]) || 0,
+              runsConceded: parseInt(parts[3]) || 0,
+              catches: 0, stumpings: 0, runOuts: 0,
+              type: 'bowling',
+              include: true
+            })
+          }
+        }
+      })
+    }
+
+    // Parse fielding
+    if (fielding.trim()) {
+      fielding.split('\n').forEach(line => {
+        const parts = line.split(',').map(p => p.trim()).filter(p => p)
+        if (parts.length >= 1 && parts[0]) {
+          const playerName = parts[0]
+          const dbPlayer = findPlayer(playerName)
+          const existing = matched.find(m => m.playerName === playerName || (dbPlayer && m.player_id === dbPlayer.id))
+          
+          if (existing) {
+            existing.catches = parseInt(parts[1]) || 0
+            existing.stumpings = parseInt(parts[2]) || 0
+            existing.runOuts = parseInt(parts[3]) || 0
+          }
+        }
+      })
+    }
+
+    if (matched.length === 0) {
+      showMsg('No valid data found. Check format!', 'error')
+      return
+    }
+
+    setExtractedPerfs({ performances: matched, matchId: match_id })
+    showMsg(`✅ Parsed ${matched.length} players! Review and save.`, 'success')
+    setShowManualInput(false)
   }
 
   async function uploadScorecard(file, matchId) {
@@ -233,7 +358,8 @@ Respond ONLY with a valid JSON object, no markdown, no explanation:
           catches: 0,
           stumpings: 0,
           runOuts: 0,
-          type: 'batting'
+          type: 'batting',
+          include: !!dbPlayer?.id
         })
       }
 
@@ -258,7 +384,8 @@ Respond ONLY with a valid JSON object, no markdown, no explanation:
             maidens: bw.maidens || 0,
             runsConceded: bw.runsConceded || 0,
             catches: 0, stumpings: 0, runOuts: 0,
-            type: 'bowling'
+            type: 'bowling',
+            include: !!dbPlayer?.id
           })
         }
       }
@@ -280,23 +407,6 @@ Respond ONLY with a valid JSON object, no markdown, no explanation:
       showMsg('Error reading scorecard: ' + e.message, 'error')
     }
     setUploading(false)
-  }
-
-  function findPlayer(name) {
-    if (!name) return null
-    const lower = name.toLowerCase().trim()
-    // Exact match
-    let found = allPlayers.find(p => p.name.toLowerCase() === lower)
-    if (found) return found
-    // Last name match
-    const parts = lower.split(' ')
-    const lastName = parts[parts.length - 1]
-    found = allPlayers.find(p => p.name.toLowerCase().includes(lastName) && lastName.length > 3)
-    if (found) return found
-    // First name match
-    const firstName = parts[0]
-    found = allPlayers.find(p => p.name.toLowerCase().startsWith(firstName) && firstName.length > 3)
-    return found || null
   }
 
   async function savePerformances() {
@@ -341,6 +451,7 @@ Respond ONLY with a valid JSON object, no markdown, no explanation:
     showMsg(`✅ Saved ${saved} performances! Fantasy points updated.`, 'success')
     setExtractedPerfs(null)
     setSelectedMatch(null)
+    setManualScorecard({ match_id: null, batting: '', bowling: '', fielding: '' })
     setSavingPerfs(false)
     load()
   }
@@ -362,16 +473,6 @@ Respond ONLY with a valid JSON object, no markdown, no explanation:
     })
   }
 
-  // Initialize include flag when perfs extracted
-  useEffect(() => {
-    if (extractedPerfs) {
-      setExtractedPerfs(prev => ({
-        ...prev,
-        performances: prev.performances.map(p => ({ ...p, include: !!p.player_id }))
-      }))
-    }
-  }, [extractedPerfs?.matchId])
-
   const totalPts = Object.values(matchPoints).reduce((a, b) => a + b, 0)
 
   if (loading) return (
@@ -389,7 +490,7 @@ Respond ONLY with a valid JSON object, no markdown, no explanation:
           <div>
             <div style={{ fontSize:11, color:'var(--text3)', textTransform:'uppercase', letterSpacing:'1px', fontWeight:600, marginBottom:4 }}>Season 2026</div>
             <h1 style={{ fontFamily:'Rajdhani', fontSize:'clamp(24px,5vw,36px)', fontWeight:700, marginBottom:4 }}>IPL Matches</h1>
-            <div style={{ color:'var(--text2)', fontSize:13 }}>📸 Upload scorecard screenshot → AI reads it automatically</div>
+            <div style={{ color:'var(--text2)', fontSize:13 }}>📸 Upload scorecard screenshot or 📋 paste data → Fantasy points calculated automatically</div>
           </div>
           <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
             <div style={{ padding:'8px 14px', background:'rgba(240,165,0,0.08)', border:'1px solid rgba(240,165,0,0.2)', borderRadius:10 }}>
@@ -470,13 +571,89 @@ Respond ONLY with a valid JSON object, no markdown, no explanation:
         </div>
       )}
 
+      {/* Manual Scorecard Input Form */}
+      {showManualInput && member?.is_admin && (
+        <div className="fade-in" style={{ background:'var(--navy2)', border:'1px solid var(--border2)', borderRadius:16, padding:20, marginBottom:20 }}>
+          <h3 style={{ fontFamily:'Rajdhani', fontSize:18, fontWeight:700, marginBottom:16 }}>📋 Paste Scorecard Details</h3>
+          
+          {/* Match selector */}
+          <div style={{ marginBottom:16 }}>
+            <div style={{ fontSize:11, color:'var(--text3)', marginBottom:4, fontWeight:600 }}>Select Match</div>
+            <select 
+              value={manualScorecard.match_id || ''} 
+              onChange={e => setManualScorecard({...manualScorecard, match_id: e.target.value})}
+              style={{ width:'100%', padding:'8px 10px', fontSize:13, borderRadius:8, background:'var(--navy4)', border:'1px solid var(--border)', color:'var(--text2)', cursor:'pointer' }}>
+              <option value="">-- Select a match --</option>
+              {matches.map(m => (
+                <option key={m.id} value={m.id}>{m.team1} vs {m.team2}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Batting input */}
+          <div style={{ marginBottom:16 }}>
+            <div style={{ fontSize:11, color:'var(--text3)', marginBottom:4, fontWeight:600 }}>
+              ⚾ Batting Data (Name, Runs, Balls, Fours, Sixes, Dismissal)
+            </div>
+            <textarea
+              value={manualScorecard.batting}
+              onChange={e => setManualScorecard({...manualScorecard, batting: e.target.value})}
+              placeholder="Virat Kohli, 72, 43, 8, 2, not out&#10;Rohit Sharma, 45, 28, 5, 1, caught"
+              style={{ width:'100%', height:100, padding:'10px', fontSize:12, borderRadius:8, background:'var(--navy4)', border:'1px solid var(--border)', color:'var(--text2)', fontFamily:'monospace', resize:'vertical' }}
+            />
+            <div style={{ fontSize:10, color:'var(--text3)', marginTop:4 }}>One player per line, comma-separated</div>
+          </div>
+
+          {/* Bowling input */}
+          <div style={{ marginBottom:16 }}>
+            <div style={{ fontSize:11, color:'var(--text3)', marginBottom:4, fontWeight:600 }}>
+              🎳 Bowling Data (Name, Overs, Maidens, Runs, Wickets)
+            </div>
+            <textarea
+              value={manualScorecard.bowling}
+              onChange={e => setManualScorecard({...manualScorecard, bowling: e.target.value})}
+              placeholder="Jasprit Bumrah, 4.0, 1, 22, 3&#10;Yuzvendra Chahal, 4, 0, 35, 2"
+              style={{ width:'100%', height:80, padding:'10px', fontSize:12, borderRadius:8, background:'var(--navy4)', border:'1px solid var(--border)', color:'var(--text2)', fontFamily:'monospace', resize:'vertical' }}
+            />
+            <div style={{ fontSize:10, color:'var(--text3)', marginTop:4 }}>One player per line, comma-separated</div>
+          </div>
+
+          {/* Fielding input */}
+          <div style={{ marginBottom:16 }}>
+            <div style={{ fontSize:11, color:'var(--text3)', marginBottom:4, fontWeight:600 }}>
+              🎯 Fielding Data (Name, Catches, Stumpings, Runouts)
+            </div>
+            <textarea
+              value={manualScorecard.fielding}
+              onChange={e => setManualScorecard({...manualScorecard, fielding: e.target.value})}
+              placeholder="MS Dhoni, 2, 1, 0&#10;Hardik Pandya, 1, 0, 0"
+              style={{ width:'100%', height:60, padding:'10px', fontSize:12, borderRadius:8, background:'var(--navy4)', border:'1px solid var(--border)', color:'var(--text2)', fontFamily:'monospace', resize:'vertical' }}
+            />
+            <div style={{ fontSize:10, color:'var(--text3)', marginTop:4 }}>One player per line, comma-separated (optional)</div>
+          </div>
+
+          <div style={{ display:'flex', gap:10, flexWrap:'wrap', marginBottom:14 }}>
+            <button className="btn btn-primary" onClick={parseManualScorecard} style={{ fontSize:13, padding:'8px 20px' }}>
+              ✓ Parse & Review
+            </button>
+            <button className="btn btn-ghost" onClick={() => setShowManualInput(false)} style={{ fontSize:13, padding:'8px 20px' }}>
+              ✕ Cancel
+            </button>
+          </div>
+
+          <div style={{ padding:'10px 14px', background:'rgba(0,212,170,0.08)', border:'1px solid rgba(0,212,170,0.2)', borderRadius:10, fontSize:12, color:'var(--text2)' }}>
+            💡 <strong>Format:</strong> Copy-paste data from GPT/Claude with each line as: name, value1, value2, ...
+          </div>
+        </div>
+      )}
+
       {/* AI Scorecard Review Panel */}
       {extractedPerfs && (
         <div className="fade-in" style={{ background:'var(--navy2)', border:'1px solid rgba(0,212,170,0.3)', borderRadius:16, padding:20, marginBottom:20 }}>
           <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16, flexWrap:'wrap', gap:8 }}>
             <div>
               <h3 style={{ fontFamily:'Rajdhani', fontSize:20, fontWeight:700, color:'var(--teal)' }}>
-                🤖 AI Extracted {extractedPerfs.performances.length} Players
+                ✅ Extracted {extractedPerfs.performances.length} Players
               </h3>
               <div style={{ fontSize:12, color:'var(--text3)', marginTop:2 }}>
                 Review matches, fix any wrong player, then save
@@ -492,7 +669,7 @@ Respond ONLY with a valid JSON object, no markdown, no explanation:
             </div>
           </div>
 
-          <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+          <div style={{ display:'flex', flexDirection:'column', gap:8, maxHeight:'500px', overflowY:'auto' }}>
             {extractedPerfs.performances.map((p, i) => {
               const { points } = calculateFantasyPoints(p)
               return (
@@ -655,7 +832,10 @@ Respond ONLY with a valid JSON object, no markdown, no explanation:
                       <input ref={isSelected ? fileRef : null} type="file" accept="image/*"
                         style={{ display:'none' }}
                         onChange={e => {
-                          if (e.target.files[0]) uploadScorecard(e.target.files[0], m.id)
+                          if (e.target.files[0]) {
+                            uploadScorecard(e.target.files[0], m.id)
+                            if (fileRef.current) fileRef.current.value = ''
+                          }
                         }} />
 
                       <button
@@ -665,8 +845,19 @@ Respond ONLY with a valid JSON object, no markdown, no explanation:
                           setSelectedMatch(m.id)
                           setTimeout(() => fileRef.current?.click(), 50)
                         }}
-                        disabled={uploading}>
+                        disabled={uploading && selectedMatch === m.id}>
                         {uploading && selectedMatch === m.id ? '🤖 AI Reading...' : '📸 Upload Scorecard'}
+                      </button>
+
+                      <button
+                        className="btn btn-teal"
+                        style={{ fontSize:12, padding:'5px 14px', borderRadius:8 }}
+                        onClick={() => {
+                          setSelectedMatch(m.id)
+                          setManualScorecard({ match_id: m.id, batting: '', bowling: '', fielding: '' })
+                          setShowManualInput(true)
+                        }}>
+                        📋 Paste Data
                       </button>
 
                       <select value={m.status}
