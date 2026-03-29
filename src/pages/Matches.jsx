@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { calculateFantasyPoints, POINTS_GUIDE } from '../lib/fantasyPoints'
@@ -12,19 +12,21 @@ export default function Matches() {
   const [mySquadIds, setMySquadIds] = useState(new Set())
   const [league, setLeague] = useState(null)
   const [players, setPlayers] = useState({})
+  const [allPlayers, setAllPlayers] = useState([])
   const [loading, setLoading] = useState(true)
   const [showGuide, setShowGuide] = useState(false)
   const [member, setMember] = useState(null)
   const [showAddMatch, setShowAddMatch] = useState(false)
-  const [showAddPerf, setShowAddPerf] = useState(null)
   const [msg, setMsg] = useState('')
   const [msgType, setMsgType] = useState('success')
-  const [allPlayers, setAllPlayers] = useState([])
-
-  // Add match form
   const [newMatch, setNewMatch] = useState({ team1:'', team2:'', venue:'', match_date:'', status:'completed' })
-  // Add performance form
-  const [perfForm, setPerfForm] = useState({ player_id:'', runs:0, balls:0, fours:0, sixes:0, wickets:0, overs:0, maidens:0, runsConceded:0, catches:0, stumpings:0, runOuts:0, dismissalType:'' })
+
+  // Scorecard AI upload
+  const [selectedMatch, setSelectedMatch] = useState(null)
+  const [uploading, setUploading] = useState(false)
+  const [extractedPerfs, setExtractedPerfs] = useState(null)
+  const [savingPerfs, setSavingPerfs] = useState(false)
+  const fileRef = useRef(null)
 
   const TEAMS = ['MI','CSK','RCB','KKR','RR','DC','PBKS','SRH','GT','LSG']
 
@@ -79,18 +81,19 @@ export default function Matches() {
 
   function showMsg(text, type = 'success') {
     setMsg(text); setMsgType(type)
-    setTimeout(() => setMsg(''), 4000)
+    setTimeout(() => setMsg(''), 5000)
   }
 
   async function addMatch() {
     if (!newMatch.team1 || !newMatch.team2) { showMsg('Select both teams!', 'error'); return }
     const { error } = await supabase.from('matches').insert({
       team1: newMatch.team1, team2: newMatch.team2,
-      venue: newMatch.venue, match_date: newMatch.match_date || new Date().toISOString(),
+      venue: newMatch.venue,
+      match_date: newMatch.match_date || new Date().toISOString(),
       status: newMatch.status
     })
     if (error) { showMsg('Error: ' + error.message, 'error'); return }
-    showMsg('Match added!')
+    showMsg('Match added! Now upload the scorecard.')
     setShowAddMatch(false)
     setNewMatch({ team1:'', team2:'', venue:'', match_date:'', status:'completed' })
     load()
@@ -105,57 +108,269 @@ export default function Matches() {
     load()
   }
 
-  async function addPerformance() {
-    if (!perfForm.player_id) { showMsg('Select a player!', 'error'); return }
-    if (!showAddPerf) return
+  async function uploadScorecard(file, matchId) {
+    if (!file) return
+    setUploading(true)
+    setExtractedPerfs(null)
+    showMsg('🤖 Claude AI is reading the scorecard...', 'success')
 
-    const perf = {
-      runs: parseInt(perfForm.runs) || 0,
-      balls: parseInt(perfForm.balls) || 0,
-      fours: parseInt(perfForm.fours) || 0,
-      sixes: parseInt(perfForm.sixes) || 0,
-      wickets: parseInt(perfForm.wickets) || 0,
-      overs: parseFloat(perfForm.overs) || 0,
-      maidens: parseInt(perfForm.maidens) || 0,
-      runsConceded: parseInt(perfForm.runsConceded) || 0,
-      catches: parseInt(perfForm.catches) || 0,
-      stumpings: parseInt(perfForm.stumpings) || 0,
-      runOuts: parseInt(perfForm.runOuts) || 0,
-      dismissalType: perfForm.dismissalType || '',
+    try {
+      // Convert image to base64
+      const base64 = await new Promise((res, rej) => {
+        const reader = new FileReader()
+        reader.onload = () => res(reader.result.split(',')[1])
+        reader.onerror = rej
+        reader.readAsDataURL(file)
+      })
+
+      const mediaType = file.type || 'image/jpeg'
+
+      // Call Claude API
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 4000,
+          messages: [{
+            role: 'user',
+            content: [
+              {
+                type: 'image',
+                source: { type: 'base64', media_type: mediaType, data: base64 }
+              },
+              {
+                type: 'text',
+                text: `You are analyzing an IPL cricket scorecard image. Extract ALL player performances from this scorecard.
+
+For EVERY batsman shown, extract:
+- name (exact as shown)
+- runs scored
+- balls faced
+- fours hit
+- sixes hit
+- how they got out (bowled/lbw/caught/run out/stumped/not out)
+
+For EVERY bowler shown, extract:
+- name (exact as shown)
+- overs bowled
+- maidens
+- runs conceded
+- wickets taken
+
+For fielding, if visible extract catches/stumpings/run outs.
+
+Respond ONLY with a valid JSON object, no markdown, no explanation:
+{
+  "batting": [
+    {
+      "name": "Virat Kohli",
+      "runs": 72,
+      "balls": 43,
+      "fours": 8,
+      "sixes": 2,
+      "dismissal": "not out"
     }
+  ],
+  "bowling": [
+    {
+      "name": "Jasprit Bumrah",
+      "overs": 4.0,
+      "maidens": 1,
+      "runsConceded": 22,
+      "wickets": 3
+    }
+  ],
+  "fielding": [
+    {
+      "name": "MS Dhoni",
+      "catches": 2,
+      "stumpings": 1,
+      "runOuts": 0
+    }
+  ]
+}`
+              }
+            ]
+          }]
+        })
+      })
 
-    const { points } = calculateFantasyPoints(perf)
+      const data = await response.json()
+      const text = data.content?.[0]?.text || ''
 
-    await supabase.from('performances').upsert({
-      match_id: showAddPerf, player_id: perfForm.player_id, ...perf, fantasy_points: points
-    }, { onConflict: 'match_id,player_id' })
+      // Parse JSON response
+      let parsed
+      try {
+        const clean = text.replace(/```json|```/g, '').trim()
+        parsed = JSON.parse(clean)
+      } catch (e) {
+        showMsg('Could not parse scorecard. Try a clearer image!', 'error')
+        setUploading(false)
+        return
+      }
 
-    // Update match points for all leagues
-    if (league) {
+      // Match players to database
+      const matched = []
+
+      // Process batting
+      for (const b of (parsed.batting || [])) {
+        const dbPlayer = findPlayer(b.name)
+        matched.push({
+          playerName: b.name,
+          player_id: dbPlayer?.id || null,
+          dbName: dbPlayer?.name || null,
+          team: dbPlayer?.team || null,
+          runs: b.runs || 0,
+          balls: b.balls || 0,
+          fours: b.fours || 0,
+          sixes: b.sixes || 0,
+          dismissalType: b.dismissal || '',
+          wickets: 0,
+          overs: 0,
+          maidens: 0,
+          runsConceded: 0,
+          catches: 0,
+          stumpings: 0,
+          runOuts: 0,
+          type: 'batting'
+        })
+      }
+
+      // Process bowling - merge with existing if player already in list
+      for (const bw of (parsed.bowling || [])) {
+        const dbPlayer = findPlayer(bw.name)
+        const existing = matched.find(m => m.playerName === bw.name || (dbPlayer && m.player_id === dbPlayer.id))
+        if (existing) {
+          existing.wickets = bw.wickets || 0
+          existing.overs = bw.overs || 0
+          existing.maidens = bw.maidens || 0
+          existing.runsConceded = bw.runsConceded || 0
+        } else {
+          matched.push({
+            playerName: bw.name,
+            player_id: dbPlayer?.id || null,
+            dbName: dbPlayer?.name || null,
+            team: dbPlayer?.team || null,
+            runs: 0, balls: 0, fours: 0, sixes: 0, dismissalType: '',
+            wickets: bw.wickets || 0,
+            overs: bw.overs || 0,
+            maidens: bw.maidens || 0,
+            runsConceded: bw.runsConceded || 0,
+            catches: 0, stumpings: 0, runOuts: 0,
+            type: 'bowling'
+          })
+        }
+      }
+
+      // Process fielding
+      for (const f of (parsed.fielding || [])) {
+        const dbPlayer = findPlayer(f.name)
+        const existing = matched.find(m => m.playerName === f.name || (dbPlayer && m.player_id === dbPlayer.id))
+        if (existing) {
+          existing.catches = f.catches || 0
+          existing.stumpings = f.stumpings || 0
+          existing.runOuts = f.runOuts || 0
+        }
+      }
+
+      setExtractedPerfs({ performances: matched, matchId })
+      showMsg(`✅ Found ${matched.length} players! Review and save.`, 'success')
+    } catch (e) {
+      showMsg('Error reading scorecard: ' + e.message, 'error')
+    }
+    setUploading(false)
+  }
+
+  function findPlayer(name) {
+    if (!name) return null
+    const lower = name.toLowerCase().trim()
+    // Exact match
+    let found = allPlayers.find(p => p.name.toLowerCase() === lower)
+    if (found) return found
+    // Last name match
+    const parts = lower.split(' ')
+    const lastName = parts[parts.length - 1]
+    found = allPlayers.find(p => p.name.toLowerCase().includes(lastName) && lastName.length > 3)
+    if (found) return found
+    // First name match
+    const firstName = parts[0]
+    found = allPlayers.find(p => p.name.toLowerCase().startsWith(firstName) && firstName.length > 3)
+    return found || null
+  }
+
+  async function savePerformances() {
+    if (!extractedPerfs) return
+    setSavingPerfs(true)
+    const { performances: perfs, matchId } = extractedPerfs
+    let saved = 0
+
+    for (const perf of perfs) {
+      if (!perf.player_id || !perf.include) continue
+      const { points } = calculateFantasyPoints(perf)
+
+      await supabase.from('performances').upsert({
+        match_id: matchId,
+        player_id: perf.player_id,
+        runs: perf.runs, balls: perf.balls,
+        fours: perf.fours, sixes: perf.sixes,
+        wickets: perf.wickets, overs: perf.overs,
+        maidens: perf.maidens, runsConceded: perf.runsConceded,
+        catches: perf.catches, stumpings: perf.stumpings,
+        runOuts: perf.runOuts, dismissalType: perf.dismissalType,
+        fantasy_points: points
+      }, { onConflict: 'match_id,player_id' })
+
+      // Update match points for all leagues
       const { data: sq } = await supabase.from('squad').select('user_id, league_id')
-        .eq('player_id', perfForm.player_id)
+        .eq('player_id', perf.player_id)
       for (const s of sq || []) {
         const { data: ex } = await supabase.from('match_points').select('*')
-          .eq('match_id', showAddPerf).eq('user_id', s.user_id).eq('league_id', s.league_id).maybeSingle()
+          .eq('match_id', matchId).eq('user_id', s.user_id).eq('league_id', s.league_id).maybeSingle()
         if (ex) {
           await supabase.from('match_points').update({ total_points: ex.total_points + points }).eq('id', ex.id)
         } else {
           await supabase.from('match_points').insert({
-            match_id: showAddPerf, user_id: s.user_id, league_id: s.league_id, total_points: points
+            match_id: matchId, user_id: s.user_id, league_id: s.league_id, total_points: points
           })
         }
       }
+      saved++
     }
 
-    showMsg(`${players[perfForm.player_id]?.name} — +${points} pts added!`)
-    setPerfForm({ player_id:'', runs:0, balls:0, fours:0, sixes:0, wickets:0, overs:0, maidens:0, runsConceded:0, catches:0, stumpings:0, runOuts:0, dismissalType:'' })
+    showMsg(`✅ Saved ${saved} performances! Fantasy points updated.`, 'success')
+    setExtractedPerfs(null)
+    setSelectedMatch(null)
+    setSavingPerfs(false)
     load()
   }
 
-  async function updateMatchStatus(matchId, status) {
-    await supabase.from('matches').update({ status }).eq('id', matchId)
-    load()
+  function togglePerf(idx) {
+    setExtractedPerfs(prev => {
+      const updated = [...prev.performances]
+      updated[idx] = { ...updated[idx], include: !updated[idx].include }
+      return { ...prev, performances: updated }
+    })
   }
+
+  function updatePlayerMapping(idx, playerId) {
+    setExtractedPerfs(prev => {
+      const updated = [...prev.performances]
+      const player = allPlayers.find(p => p.id === playerId)
+      updated[idx] = { ...updated[idx], player_id: playerId, dbName: player?.name, team: player?.team }
+      return { ...prev, performances: updated }
+    })
+  }
+
+  // Initialize include flag when perfs extracted
+  useEffect(() => {
+    if (extractedPerfs) {
+      setExtractedPerfs(prev => ({
+        ...prev,
+        performances: prev.performances.map(p => ({ ...p, include: !!p.player_id }))
+      }))
+    }
+  }, [extractedPerfs?.matchId])
 
   const totalPts = Object.values(matchPoints).reduce((a, b) => a + b, 0)
 
@@ -174,7 +389,7 @@ export default function Matches() {
           <div>
             <div style={{ fontSize:11, color:'var(--text3)', textTransform:'uppercase', letterSpacing:'1px', fontWeight:600, marginBottom:4 }}>Season 2026</div>
             <h1 style={{ fontFamily:'Rajdhani', fontSize:'clamp(24px,5vw,36px)', fontWeight:700, marginBottom:4 }}>IPL Matches</h1>
-            <div style={{ color:'var(--text2)', fontSize:13 }}>Add matches manually · Points auto-calculated</div>
+            <div style={{ color:'var(--text2)', fontSize:13 }}>📸 Upload scorecard screenshot → AI reads it automatically</div>
           </div>
           <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
             <div style={{ padding:'8px 14px', background:'rgba(240,165,0,0.08)', border:'1px solid rgba(240,165,0,0.2)', borderRadius:10 }}>
@@ -187,7 +402,7 @@ export default function Matches() {
               </button>
             )}
             <button className="btn btn-ghost" onClick={() => setShowGuide(!showGuide)} style={{ fontSize:13 }}>
-              📋 Points Guide
+              📋 Guide
             </button>
           </div>
         </div>
@@ -204,18 +419,18 @@ export default function Matches() {
       {showAddMatch && member?.is_admin && (
         <div className="fade-in" style={{ background:'var(--navy2)', border:'1px solid var(--border2)', borderRadius:16, padding:20, marginBottom:20 }}>
           <h3 style={{ fontFamily:'Rajdhani', fontSize:18, fontWeight:700, marginBottom:16 }}>Add IPL Match</h3>
-          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(160px,1fr))', gap:10, marginBottom:14 }}>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(150px,1fr))', gap:10, marginBottom:14 }}>
             <div>
               <div style={{ fontSize:11, color:'var(--text3)', marginBottom:4 }}>Team 1</div>
               <select className="input" value={newMatch.team1} onChange={e => setNewMatch({...newMatch, team1:e.target.value})} style={{ padding:'8px 10px', fontSize:13 }}>
-                <option value="">Select team</option>
+                <option value="">Select</option>
                 {TEAMS.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
             </div>
             <div>
               <div style={{ fontSize:11, color:'var(--text3)', marginBottom:4 }}>Team 2</div>
               <select className="input" value={newMatch.team2} onChange={e => setNewMatch({...newMatch, team2:e.target.value})} style={{ padding:'8px 10px', fontSize:13 }}>
-                <option value="">Select team</option>
+                <option value="">Select</option>
                 {TEAMS.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
             </div>
@@ -236,9 +451,7 @@ export default function Matches() {
               </select>
             </div>
           </div>
-          <button className="btn btn-primary" onClick={addMatch} style={{ fontSize:13, padding:'8px 20px' }}>
-            Add Match
-          </button>
+          <button className="btn btn-primary" onClick={addMatch} style={{ fontSize:13, padding:'8px 20px' }}>Add Match</button>
         </div>
       )}
 
@@ -257,96 +470,100 @@ export default function Matches() {
         </div>
       )}
 
-      {/* No matches */}
-      {matches.length === 0 && (
-        <div style={{ padding:36, textAlign:'center', marginBottom:20, background:'linear-gradient(135deg, rgba(240,165,0,0.05), var(--navy2))', border:'1px solid rgba(240,165,0,0.15)', borderRadius:18 }}>
-          <div style={{ fontSize:48, marginBottom:12 }}>🏏</div>
-          <h2 style={{ fontFamily:'Rajdhani', fontSize:24, fontWeight:700, marginBottom:8 }}>IPL 2026 has started!</h2>
-          <div style={{ color:'var(--text2)', fontSize:14, marginBottom:20, lineHeight:1.7 }}>
-            RCB beat SRH by 6 wickets in the opener.<br />
-            Admin can add matches manually using the <strong style={{ color:'var(--gold)' }}>+ Add Match</strong> button above.
+      {/* AI Scorecard Review Panel */}
+      {extractedPerfs && (
+        <div className="fade-in" style={{ background:'var(--navy2)', border:'1px solid rgba(0,212,170,0.3)', borderRadius:16, padding:20, marginBottom:20 }}>
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16, flexWrap:'wrap', gap:8 }}>
+            <div>
+              <h3 style={{ fontFamily:'Rajdhani', fontSize:20, fontWeight:700, color:'var(--teal)' }}>
+                🤖 AI Extracted {extractedPerfs.performances.length} Players
+              </h3>
+              <div style={{ fontSize:12, color:'var(--text3)', marginTop:2 }}>
+                Review matches, fix any wrong player, then save
+              </div>
+            </div>
+            <div style={{ display:'flex', gap:8 }}>
+              <button className="btn btn-ghost" onClick={() => setExtractedPerfs(null)} style={{ fontSize:13 }}>
+                ✕ Discard
+              </button>
+              <button className="btn btn-primary" onClick={savePerformances} disabled={savingPerfs} style={{ fontSize:13, padding:'8px 20px' }}>
+                {savingPerfs ? '⟳ Saving...' : `✓ Save ${extractedPerfs.performances.filter(p => p.include && p.player_id).length} Performances`}
+              </button>
+            </div>
           </div>
-          {member?.is_admin && (
-            <button className="btn btn-primary" onClick={() => setShowAddMatch(true)} style={{ padding:'12px 28px', fontSize:15 }}>
-              + Add First Match
-            </button>
-          )}
+
+          <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+            {extractedPerfs.performances.map((p, i) => {
+              const { points } = calculateFantasyPoints(p)
+              return (
+                <div key={i} style={{ background: p.include ? 'var(--navy3)' : 'rgba(255,71,87,0.05)', border:`1px solid ${p.include?'var(--border)':'rgba(255,71,87,0.2)'}`, borderRadius:10, padding:'10px 14px', display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
+
+                  {/* Toggle checkbox */}
+                  <input type="checkbox" checked={!!p.include} onChange={() => togglePerf(i)}
+                    style={{ width:16, height:16, cursor:'pointer', flexShrink:0 }} />
+
+                  {/* Player name from scorecard */}
+                  <div style={{ fontSize:12, color:'var(--text3)', minWidth:120, flexShrink:0 }}>
+                    <div style={{ fontSize:10, color:'var(--text3)', marginBottom:1 }}>From scorecard</div>
+                    <div style={{ fontWeight:600, color:'var(--text2)' }}>{p.playerName}</div>
+                  </div>
+
+                  {/* Arrow */}
+                  <div style={{ fontSize:16, color:'var(--text3)', flexShrink:0 }}>→</div>
+
+                  {/* DB player match dropdown */}
+                  <div style={{ flex:1, minWidth:160 }}>
+                    <div style={{ fontSize:10, color:'var(--text3)', marginBottom:1 }}>Matched to</div>
+                    <select value={p.player_id || ''} onChange={e => updatePlayerMapping(i, e.target.value)}
+                      style={{ width:'100%', padding:'5px 8px', borderRadius:7, background:'var(--navy4)', border:`1px solid ${p.player_id?'rgba(0,212,170,0.3)':'rgba(255,71,87,0.3)'}`, color:p.player_id?'var(--teal)':'var(--red)', fontSize:12, cursor:'pointer' }}>
+                      <option value="">-- Not matched --</option>
+                      {allPlayers.map(pl => <option key={pl.id} value={pl.id}>{pl.name} ({pl.team})</option>)}
+                    </select>
+                  </div>
+
+                  {/* Stats summary */}
+                  <div style={{ fontSize:11, color:'var(--text3)', flexShrink:0, textAlign:'center' }}>
+                    {p.runs > 0 && <span style={{ color:'var(--gold)', fontWeight:600 }}>{p.runs}r </span>}
+                    {p.balls > 0 && <span>({p.balls}b) </span>}
+                    {p.fours > 0 && <span>{p.fours}x4 </span>}
+                    {p.sixes > 0 && <span>{p.sixes}x6 </span>}
+                    {p.wickets > 0 && <span style={{ color:'var(--teal)', fontWeight:600 }}>{p.wickets}w </span>}
+                    {p.overs > 0 && <span>{p.overs}ov </span>}
+                    {p.catches > 0 && <span>{p.catches}c </span>}
+                  </div>
+
+                  {/* Points */}
+                  <div style={{ fontFamily:'Rajdhani', fontSize:20, fontWeight:700, color:points>0?'var(--gold)':points<0?'var(--red)':'var(--text3)', flexShrink:0, minWidth:60, textAlign:'right' }}>
+                    {points > 0 ? `+${points}` : points}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+
+          <div style={{ marginTop:14, padding:'10px 14px', background:'rgba(240,165,0,0.06)', border:'1px solid rgba(240,165,0,0.15)', borderRadius:10, fontSize:13, color:'var(--text2)' }}>
+            💡 <strong>Tip:</strong> Uncheck players not in any squad to skip them. Fix wrong matches using the dropdown.
+            Total fantasy points to be awarded: <span style={{ color:'var(--gold)', fontWeight:700 }}>
+              {extractedPerfs.performances.filter(p => p.include && p.player_id).reduce((a, p) => a + calculateFantasyPoints(p).points, 0)} pts
+            </span>
+          </div>
         </div>
       )}
 
-      {/* Add Performance Panel */}
-      {showAddPerf && member?.is_admin && (
-        <div className="fade-in" style={{ background:'var(--navy2)', border:'1px solid rgba(0,212,170,0.2)', borderRadius:16, padding:20, marginBottom:20 }}>
-          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16 }}>
-            <h3 style={{ fontFamily:'Rajdhani', fontSize:18, fontWeight:700, color:'var(--teal)' }}>
-              Add Player Performance
-            </h3>
-            <button onClick={() => setShowAddPerf(null)} style={{ background:'none', border:'none', color:'var(--text3)', cursor:'pointer', fontSize:18 }}>✕</button>
+      {/* No matches */}
+      {matches.length === 0 && !showAddMatch && (
+        <div style={{ padding:36, textAlign:'center', marginBottom:20, background:'linear-gradient(135deg, rgba(240,165,0,0.05), var(--navy2))', border:'1px solid rgba(240,165,0,0.15)', borderRadius:18 }}>
+          <div style={{ fontSize:48, marginBottom:12 }}>🏏</div>
+          <h2 style={{ fontFamily:'Rajdhani', fontSize:24, fontWeight:700, marginBottom:8 }}>IPL 2026 has started!</h2>
+          <div style={{ color:'var(--text2)', fontSize:14, marginBottom:8, lineHeight:1.7 }}>
+            RCB beat SRH in the opener on 28 March.<br />
+            {member?.is_admin ? 'Add the match and upload the scorecard screenshot!' : 'Admin will add matches soon.'}
           </div>
-
-          <div style={{ marginBottom:12 }}>
-            <div style={{ fontSize:11, color:'var(--text3)', marginBottom:4 }}>Select Player</div>
-            <select className="input" value={perfForm.player_id} onChange={e => setPerfForm({...perfForm, player_id:e.target.value})} style={{ padding:'8px 10px', fontSize:13 }}>
-              <option value="">-- Select Player --</option>
-              {allPlayers.map(p => <option key={p.id} value={p.id}>{p.name} ({p.team})</option>)}
-            </select>
-          </div>
-
-          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(110px,1fr))', gap:8, marginBottom:14 }}>
-            {[
-              { key:'runs', label:'Runs' },
-              { key:'balls', label:'Balls' },
-              { key:'fours', label:'4s' },
-              { key:'sixes', label:'6s' },
-              { key:'wickets', label:'Wickets' },
-              { key:'overs', label:'Overs' },
-              { key:'runsConceded', label:'Runs Given' },
-              { key:'maidens', label:'Maidens' },
-              { key:'catches', label:'Catches' },
-              { key:'stumpings', label:'Stumpings' },
-              { key:'runOuts', label:'Run Outs' },
-            ].map(f => (
-              <div key={f.key}>
-                <div style={{ fontSize:10, color:'var(--text3)', marginBottom:3 }}>{f.label}</div>
-                <input className="input" type="number" min={0} value={perfForm[f.key]}
-                  onChange={e => setPerfForm({...perfForm, [f.key]: e.target.value})}
-                  style={{ padding:'6px 8px', fontSize:13, textAlign:'center' }} />
-              </div>
-            ))}
-          </div>
-
-          <div style={{ marginBottom:14 }}>
-            <div style={{ fontSize:11, color:'var(--text3)', marginBottom:4 }}>Dismissal Type (optional)</div>
-            <select className="input" value={perfForm.dismissalType} onChange={e => setPerfForm({...perfForm, dismissalType:e.target.value})} style={{ padding:'8px 10px', fontSize:13, width:'auto' }}>
-              <option value="">Not out / N/A</option>
-              <option value="bowled">Bowled</option>
-              <option value="lbw">LBW</option>
-              <option value="caught">Caught</option>
-              <option value="run out">Run Out</option>
-              <option value="stumped">Stumped</option>
-            </select>
-          </div>
-
-          {/* Points preview */}
-          {perfForm.player_id && (
-            <div style={{ padding:'10px 14px', background:'rgba(240,165,0,0.06)', border:'1px solid rgba(240,165,0,0.2)', borderRadius:10, marginBottom:14, fontSize:13 }}>
-              <span style={{ color:'var(--text2)' }}>Fantasy Points: </span>
-              <span style={{ fontFamily:'Rajdhani', fontSize:18, fontWeight:700, color:'var(--gold)' }}>
-                +{calculateFantasyPoints({
-                  runs: parseInt(perfForm.runs)||0, balls: parseInt(perfForm.balls)||0,
-                  fours: parseInt(perfForm.fours)||0, sixes: parseInt(perfForm.sixes)||0,
-                  wickets: parseInt(perfForm.wickets)||0, overs: parseFloat(perfForm.overs)||0,
-                  runsConceded: parseInt(perfForm.runsConceded)||0, maidens: parseInt(perfForm.maidens)||0,
-                  catches: parseInt(perfForm.catches)||0, stumpings: parseInt(perfForm.stumpings)||0,
-                  runOuts: parseInt(perfForm.runOuts)||0, dismissalType: perfForm.dismissalType
-                }).points} pts
-              </span>
-            </div>
+          {member?.is_admin && (
+            <button className="btn btn-primary" onClick={() => setShowAddMatch(true)} style={{ padding:'12px 28px', fontSize:15, marginTop:8 }}>
+              + Add First Match
+            </button>
           )}
-
-          <button className="btn btn-teal" onClick={addPerformance} style={{ fontSize:13, padding:'10px 24px' }}>
-            ✓ Save Performance
-          </button>
         </div>
       )}
 
@@ -361,11 +578,10 @@ export default function Matches() {
             const isDone = m.status === 'completed'
             const statusColor = isLive?'var(--red)':isDone?'var(--teal)':'var(--text3)'
             const statusBg = isLive?'var(--red2)':isDone?'var(--teal2)':'var(--navy4)'
+            const isSelected = selectedMatch === m.id
 
             return (
-              <div key={m.id} style={{ background:'var(--navy2)', border:'1px solid var(--border)', borderRadius:14, overflow:'hidden', transition:'all 0.2s' }}
-                onMouseEnter={e => { e.currentTarget.style.borderColor='var(--border2)' }}
-                onMouseLeave={e => { e.currentTarget.style.borderColor='var(--border)' }}>
+              <div key={m.id} style={{ background:'var(--navy2)', border:`1px solid ${isSelected?'rgba(0,212,170,0.3)':'var(--border)'}`, borderRadius:14, overflow:'hidden', transition:'all 0.2s' }}>
 
                 {/* Header */}
                 <div style={{ background:'var(--navy3)', padding:'12px 14px', display:'flex', alignItems:'center', justifyContent:'space-between', borderBottom:'1px solid var(--border)' }}>
@@ -400,7 +616,7 @@ export default function Matches() {
                             </div>
                             <div style={{ fontSize:11, color:'var(--text3)', marginTop:1 }}>
                               {p.runs > 0 && `${p.runs}r`}
-                              {p.runs > 0 && p.wickets > 0 && ' · '}
+                              {p.runs > 0 && (p.wickets > 0 || p.catches > 0) && ' · '}
                               {p.wickets > 0 && `${p.wickets}w`}
                               {p.catches > 0 && ` · ${p.catches}c`}
                             </div>
@@ -419,42 +635,59 @@ export default function Matches() {
                   </>
                 ) : (
                   <div style={{ padding:14, color:'var(--text3)', fontSize:13, textAlign:'center' }}>
-                    {m.status === 'upcoming' ? '📅 Upcoming match' : 'No performances from your squad'}
+                    {m.status === 'upcoming' ? '📅 Upcoming match' : allPerfs.length > 0 ? `${allPerfs.length} performances recorded (none from your squad)` : 'No performances yet'}
                   </div>
                 )}
 
-                {/* Total */}
                 {myPts > 0 && (
                   <div style={{ padding:'8px 14px', background:'rgba(240,165,0,0.04)', display:'flex', justifyContent:'space-between', alignItems:'center', borderTop:'1px solid rgba(240,165,0,0.1)' }}>
-                    <span style={{ fontSize:11, color:'var(--text3)' }}>Your total this match</span>
+                    <span style={{ fontSize:11, color:'var(--text3)' }}>Your total</span>
                     <span style={{ fontFamily:'Rajdhani', fontSize:16, fontWeight:700, color:'var(--gold)' }}>+{myPts} pts</span>
                   </div>
                 )}
 
-                {/* All performances count */}
-                {allPerfs.length > 0 && (
-                  <div style={{ padding:'6px 14px', background:'var(--navy3)', borderTop:'1px solid var(--border)', fontSize:11, color:'var(--text3)' }}>
-                    {allPerfs.length} player performances recorded
-                  </div>
-                )}
-
-                {/* Admin controls */}
+                {/* Admin upload section */}
                 {member?.is_admin && (
-                  <div style={{ padding:'8px 14px', borderTop:'1px solid var(--border)', display:'flex', gap:6, flexWrap:'wrap' }}>
-                    <button className="btn btn-teal" style={{ fontSize:11, padding:'4px 12px', borderRadius:8 }}
-                      onClick={() => setShowAddPerf(showAddPerf === m.id ? null : m.id)}>
-                      + Add Performance
-                    </button>
-                    <select value={m.status} onChange={e => updateMatchStatus(m.id, e.target.value)}
-                      style={{ fontSize:11, padding:'4px 8px', borderRadius:8, background:'var(--navy4)', border:'1px solid var(--border)', color:'var(--text2)', cursor:'pointer' }}>
-                      <option value="upcoming">Upcoming</option>
-                      <option value="live">Live</option>
-                      <option value="completed">Completed</option>
-                    </select>
-                    <button onClick={() => deleteMatch(m.id)}
-                      style={{ fontSize:11, padding:'4px 8px', borderRadius:8, border:'1px solid rgba(255,71,87,0.25)', background:'var(--red2)', color:'var(--red)', cursor:'pointer' }}>
-                      Delete
-                    </button>
+                  <div style={{ borderTop:'1px solid var(--border)', background:'var(--navy3)' }}>
+
+                    {/* Upload scorecard button */}
+                    <div style={{ padding:'10px 14px', display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
+                      <input ref={isSelected ? fileRef : null} type="file" accept="image/*"
+                        style={{ display:'none' }}
+                        onChange={e => {
+                          if (e.target.files[0]) uploadScorecard(e.target.files[0], m.id)
+                        }} />
+
+                      <button
+                        className="btn btn-teal"
+                        style={{ fontSize:12, padding:'5px 14px', borderRadius:8 }}
+                        onClick={() => {
+                          setSelectedMatch(m.id)
+                          setTimeout(() => fileRef.current?.click(), 50)
+                        }}
+                        disabled={uploading}>
+                        {uploading && selectedMatch === m.id ? '🤖 AI Reading...' : '📸 Upload Scorecard'}
+                      </button>
+
+                      <select value={m.status}
+                        onChange={e => supabase.from('matches').update({ status: e.target.value }).eq('id', m.id).then(() => load())}
+                        style={{ fontSize:11, padding:'4px 8px', borderRadius:8, background:'var(--navy4)', border:'1px solid var(--border)', color:'var(--text2)', cursor:'pointer' }}>
+                        <option value="upcoming">Upcoming</option>
+                        <option value="live">Live</option>
+                        <option value="completed">Completed</option>
+                      </select>
+
+                      <button onClick={() => deleteMatch(m.id)}
+                        style={{ fontSize:11, padding:'4px 8px', borderRadius:8, border:'1px solid rgba(255,71,87,0.25)', background:'var(--red2)', color:'var(--red)', cursor:'pointer' }}>
+                        🗑
+                      </button>
+                    </div>
+
+                    {allPerfs.length > 0 && (
+                      <div style={{ padding:'0 14px 8px', fontSize:11, color:'var(--text3)' }}>
+                        ✅ {allPerfs.length} performances saved
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
