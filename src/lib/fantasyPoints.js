@@ -16,7 +16,7 @@ export function calculateFantasyPoints(perf) {
   if (perf.fours > 0) {
     const bp = perf.fours * 1
     points += bp
-    breakdown.push({ label: `${perf.fours} fours (boundary bonus)`, pts: bp })
+    breakdown.push({ label: `${perf.fours} fours`, pts: bp })
   }
 
   // 3. Six bonus: +2
@@ -26,9 +26,7 @@ export function calculateFantasyPoints(perf) {
     breakdown.push({ label: `${perf.sixes} sixes`, pts: sp })
   }
 
-  // 4. 30 runs in innings: +4
-  // 5. Half century (50): +8
-  // 6. Century (100): +16
+  // 4, 5, 6. Bonus runs/centuries
   if (perf.runs >= 100) {
     points += 16
     breakdown.push({ label: 'Century (100) bonus', pts: 16 })
@@ -41,7 +39,6 @@ export function calculateFantasyPoints(perf) {
   }
 
   // 7. Duck (batsman): -2
-  // Check if runs = 0 and was out (dismissalType is not "not out")
   if (perf.runs === 0 && perf.balls > 0) {
     const dismissed = perf.dismissalType && perf.dismissalType.toLowerCase() !== 'not out'
     if (dismissed) {
@@ -72,8 +69,6 @@ export function calculateFantasyPoints(perf) {
   }
 
   // 11. LBW / Bowled bonus: +8
-  // This bonus is +8 per wicket that is LBW or Bowled
-  // For now we'll add it once if dismissalType indicates LBW/Bowled
   if (perf.wickets > 0 && perf.dismissalType) {
     const isLbwOrBowled = perf.dismissalType.toLowerCase().includes('lbw') || 
                           perf.dismissalType.toLowerCase().includes('bowled')
@@ -83,9 +78,7 @@ export function calculateFantasyPoints(perf) {
     }
   }
 
-  // 12. 3-wicket haul: +4
-  // 13. 4-wicket haul: +8
-  // 14. 5-wicket haul: +16
+  // 12, 13, 14. Wicket hauls
   if (perf.wickets >= 5) {
     points += 16
     breakdown.push({ label: '5-wicket haul bonus', pts: 16 })

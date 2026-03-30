@@ -671,7 +671,7 @@ Respond ONLY with a valid JSON object, no markdown, no explanation:
 
           <div style={{ display:'flex', flexDirection:'column', gap:8, maxHeight:'500px', overflowY:'auto' }}>
             {extractedPerfs.performances.map((p, i) => {
-              const { points } = calculateFantasyPoints(p)
+              const { points, breakdown } = calculateFantasyPoints(p)
               return (
                 <div key={i} style={{ background: p.include ? 'var(--navy3)' : 'rgba(255,71,87,0.05)', border:`1px solid ${p.include?'var(--border)':'rgba(255,71,87,0.2)'}`, borderRadius:10, padding:'10px 14px', display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
 
@@ -709,9 +709,21 @@ Respond ONLY with a valid JSON object, no markdown, no explanation:
                     {p.catches > 0 && <span>{p.catches}c </span>}
                   </div>
 
-                  {/* Points */}
-                  <div style={{ fontFamily:'Rajdhani', fontSize:20, fontWeight:700, color:points>0?'var(--gold)':points<0?'var(--red)':'var(--text3)', flexShrink:0, minWidth:60, textAlign:'right' }}>
-                    {points > 0 ? `+${points}` : points}
+                  {/* Breakdown tooltip - Shows points breakdown on hover */}
+                  <div style={{ position:'relative', group:'hover' }}>
+                    <div style={{ fontFamily:'Rajdhani', fontSize:20, fontWeight:700, color:points>0?'var(--gold)':points<0?'var(--red)':'var(--text3)', flexShrink:0, minWidth:60, textAlign:'right', cursor:'pointer', title:breakdown.map(b => `${b.label}: ${b.pts}`).join(' | ') }}>
+                      {points > 0 ? `+${points}` : points}
+                    </div>
+                    {breakdown.length > 0 && (
+                      <div style={{ position:'absolute', right:0, bottom:'100%', background:'var(--navy4)', border:'1px solid var(--border)', borderRadius:8, padding:'8px 10px', fontSize:10, color:'var(--text2)', minWidth:'200px', marginBottom:8, zIndex:10, display:'none', whiteSpace:'pre-wrap' }}>
+                        {breakdown.map((b, j) => (
+                          <div key={j} style={{ display:'flex', justifyContent:'space-between', gap:8 }}>
+                            <span>{b.label}</span>
+                            <span style={{ fontWeight:700, color:b.pts > 0 ? 'var(--teal)' : 'var(--red)' }}>{b.pts > 0 ? `+${b.pts}` : b.pts}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
               )
