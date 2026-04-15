@@ -1,5 +1,6 @@
 -- Create player_match_performances table
 -- Stores individual player performances per match per user (squad owner)
+-- One record per player per match per squad owner
 CREATE TABLE IF NOT EXISTS player_match_performances (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   match_id UUID NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
@@ -25,6 +26,6 @@ CREATE TABLE IF NOT EXISTS player_match_performances (
 );
 
 -- Indexes for efficient querying
-CREATE INDEX IF NOT EXISTS idx_pmp_match_player_user ON player_match_performances(match_id, player_id, user_id);
+-- Note: (match_id, player_id, user_id) index is already created by the UNIQUE constraint
 CREATE INDEX IF NOT EXISTS idx_pmp_user_league ON player_match_performances(user_id, league_id);
 CREATE INDEX IF NOT EXISTS idx_pmp_player ON player_match_performances(player_id);
