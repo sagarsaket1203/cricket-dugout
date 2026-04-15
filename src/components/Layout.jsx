@@ -10,7 +10,6 @@ const NAV = [
   { to: '/auction', label: 'Auction', icon: '🔨' },
   { to: '/players', label: 'Players', icon: '🏏' },
   { to: '/matches', label: 'Matches', icon: '📊' },
-  { to: '/player-stats', label: 'Player Stats', icon: '📈' },
   { to: '/league-stats', label: 'League Stats', icon: '🏆' },
   { to: '/trades', label: 'Trades', icon: '🔄' },
 ]
