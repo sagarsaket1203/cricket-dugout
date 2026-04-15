@@ -8,8 +8,8 @@ import Players from './pages/Players'
 import Matches from './pages/Matches'
 import Admin from './pages/Admin'
 import Trades from './pages/Trades'
+import PlayerStats from './pages/PlayerStats'
 import LeagueStats from './pages/LeagueStats'
-import MySquad from './pages/MySquad'
 
 function AppRoutes() {
   const { profile, loading } = useAuth()
@@ -40,9 +40,9 @@ function AppRoutes() {
       <Route path="/" element={<Layout />}>
         <Route index element={<Dashboard />} />
         <Route path="auction" element={<Auction />} />
-        <Route path="my-squad" element={<MySquad />} />
         <Route path="players" element={<Players />} />
         <Route path="matches" element={<Matches />} />
+        <Route path="player-stats" element={<PlayerStats />} />
         <Route path="league-stats" element={<LeagueStats />} />
         <Route path="admin" element={<Admin />} />
 <Route path="trades" element={<Trades />} />

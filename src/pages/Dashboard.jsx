@@ -432,6 +432,7 @@ function TopPerformers({ profile, league }) {
         <h2 style={{ fontFamily:'Rajdhani', fontSize:20, fontWeight:700 }}>
           🏆 Top Performers
         </h2>
+        <a href="/player-stats" style={{ fontSize:12, color:'var(--gold)', textDecoration:'none', fontWeight:600 }}>View all →</a>
       </div>
       <div style={{ background:'var(--navy2)', border:'1px solid var(--border)', borderRadius:14, overflow:'hidden' }}>
         {topPlayers.map((s, i) => (
@@ -462,7 +463,6 @@ function MySquad({ profile, league }) {
   const [squad, setSquad] = useState([])
   const [loading, setLoading] = useState(true)
   const [requests, setRequests] = useState([])
-  const [perfMap, setPerfMap] = useState({})
   const ROLE_BG = { 'Batsman':'rgba(240,165,0,0.1)','Bowler':'rgba(0,212,170,0.1)','All-Rounder':'rgba(255,71,87,0.1)','WK-Batsman':'rgba(75,159,255,0.1)' }
   const ROLE_TEXT = { 'Batsman':'var(--gold)','Bowler':'var(--teal)','All-Rounder':'var(--red)','WK-Batsman':'var(--blue)' }
 
@@ -477,23 +477,6 @@ function MySquad({ profile, league }) {
     const { data: reqs } = await supabase.from('release_requests').select('player_id,status')
       .eq('league_id', league.id).eq('user_id', profile.id).eq('status', 'pending')
     setRequests(reqs || [])
-
-    // Load performance stats for squad players
-    const { data: perfData } = await supabase
-      .from('player_match_performances').select('player_id, match_id, fantasy_points')
-      .eq('user_id', profile.id).eq('league_id', league.id)
-    const map = {}
-    if (perfData) {
-      for (const p of perfData) {
-        if (!map[p.player_id]) map[p.player_id] = { totalPoints: 0, matchCount: 0 }
-        map[p.player_id].totalPoints += p.fantasy_points || 0
-        map[p.player_id].matchCount += 1
-      }
-      for (const id of Object.keys(map)) {
-        map[id].avgPoints = map[id].matchCount > 0 ? Math.round(map[id].totalPoints / map[id].matchCount) : 0
-      }
-    }
-    setPerfMap(map)
     setLoading(false)
   }
 
@@ -542,7 +525,6 @@ function MySquad({ profile, league }) {
         <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(150px,1fr))', gap:10 }}>
           {squad.map(s => {
             const isPending = pendingIds.has(s.player_id)
-            const perf = perfMap[s.player_id]
             return (
               <div key={s.id} style={{ background:'var(--navy2)', border:`1px solid ${isPending?'rgba(240,165,0,0.3)':s.is_traded?'rgba(0,212,170,0.3)':'var(--border)'}`, borderRadius:12, overflow:'hidden', transition:'all 0.2s' }}
                 onMouseEnter={e => { e.currentTarget.style.transform='translateY(-2px)'; e.currentTarget.style.boxShadow='0 6px 20px rgba(0,0,0,0.2)' }}
@@ -559,15 +541,6 @@ function MySquad({ profile, league }) {
                     {s.is_traded && <div style={{ fontSize:9, color:'var(--teal)', fontWeight:700, marginTop:2 }}>🔄 Traded</div>}
                   </div>
                 </div>
-                {perf && (
-                  <div style={{ padding:'4px 12px 6px', fontSize:11, color:'var(--text2)', display:'flex', alignItems:'center', gap:4, flexWrap:'wrap' }}>
-                    <span style={{ color:'var(--gold)', fontWeight:700 }}>⭐ {perf.totalPoints} pts</span>
-                    <span style={{ color:'var(--text3)' }}>|</span>
-                    <span>{perf.matchCount} match{perf.matchCount !== 1 ? 'es' : ''}</span>
-                    <span style={{ color:'var(--text3)' }}>|</span>
-                    <span style={{ color:'var(--teal)' }}>{perf.avgPoints} avg</span>
-                  </div>
-                )}
                 <div style={{ background:'var(--navy3)', padding:'7px 12px', display:'flex', justifyContent:'space-between', alignItems:'center', borderTop:'1px solid var(--border)' }}>
                   <div style={{ fontFamily:'Rajdhani', fontSize:15, fontWeight:700, color:'var(--gold)' }}>₹{s.bought_price}Cr</div>
                   {isPending ? (
