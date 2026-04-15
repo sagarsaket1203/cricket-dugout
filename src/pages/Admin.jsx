@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { IPL_PLAYERS } from '../lib/players'
+import { backfillFantasyPoints } from '../lib/backfillFantasyPoints'
 
 const ADMIN_EMAIL = 'sagarsaket120305@gmail.com'
 
@@ -52,6 +53,7 @@ export default function Admin() {
     { key:'members', label:'👥 Members' },
     { key:'releases', label:'🔓 Releases' },
     { key:'trades', label:'🔄 Trades' },
+    { key:'utilities', label:'🔧 Utilities' },
   ]
 
   return (
@@ -126,6 +128,7 @@ export default function Admin() {
         {selectedLeague && activeTab === 'members' && <MembersTab league={selectedLeague} showMsg={showMsg} />}
         {selectedLeague && activeTab === 'releases' && <ReleasesTab league={selectedLeague} showMsg={showMsg} />}
         {selectedLeague && activeTab === 'trades' && <AdminTrades league={selectedLeague} showMsg={showMsg} />}
+        {selectedLeague && activeTab === 'utilities' && <UtilitiesTab league={selectedLeague} showMsg={showMsg} />}
       </div>
     </div>
   )
@@ -682,6 +685,64 @@ function AdminTrades({ league, showMsg }) {
           </div>
         </div>
       ))}
+    </div>
+  )
+}
+
+// ==================== UTILITIES TAB ====================
+function UtilitiesTab({ league, showMsg }) {
+  const [backfilling, setBackfilling] = useState(false)
+  const [progress, setProgress] = useState(null)
+
+  async function runBackfill() {
+    if (!confirm('Recalculate fantasy points for ALL performances? This may take a moment.')) return
+    setBackfilling(true)
+    setProgress({ message: 'Starting backfill...' })
+    try {
+      const result = await backfillFantasyPoints((p) => setProgress(p))
+      showMsg(`✅ Backfill complete! Updated ${result.updated} performances, recalculated ${result.matchPointsRecalculated} match point entries.`)
+      setProgress(null)
+    } catch (e) {
+      showMsg('Error: ' + e.message, 'error')
+      setProgress(null)
+    }
+    setBackfilling(false)
+  }
+
+  return (
+    <div>
+      <h2 style={{ fontFamily:'Rajdhani', fontSize:20, fontWeight:700, marginBottom:16, color:'var(--gold)' }}>🔧 Utilities</h2>
+
+      {/* Backfill Fantasy Points */}
+      <div style={{ background:'var(--navy3)', border:'1px solid var(--border)', borderRadius:12, padding:16, marginBottom:16 }}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:10 }}>
+          <div>
+            <div style={{ fontSize:14, fontWeight:600, marginBottom:4 }}>🔄 Backfill Fantasy Points</div>
+            <div style={{ fontSize:12, color:'var(--text3)', lineHeight:1.5 }}>
+              Recalculate fantasy points for all performances where points are 0 or incorrect.<br />
+              Also updates match_points for all users in all leagues.
+            </div>
+          </div>
+          <button
+            className="btn btn-primary"
+            onClick={runBackfill}
+            disabled={backfilling}
+            style={{ padding:'10px 20px', fontSize:13, opacity: backfilling ? 0.6 : 1 }}
+          >
+            {backfilling ? '⏳ Running...' : '🔄 Backfill Points'}
+          </button>
+        </div>
+        {progress && (
+          <div style={{ padding:'8px 12px', background:'rgba(240,165,0,0.06)', border:'1px solid rgba(240,165,0,0.15)', borderRadius:8, fontSize:12, color:'var(--gold)' }}>
+            {progress.message}
+            {progress.total > 0 && (
+              <div style={{ marginTop:4, height:4, background:'var(--navy2)', borderRadius:2, overflow:'hidden' }}>
+                <div style={{ height:'100%', background:'var(--gold)', borderRadius:2, transition:'width 0.3s', width: `${Math.round((progress.current / progress.total) * 100)}%` }} />
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   )
 }
