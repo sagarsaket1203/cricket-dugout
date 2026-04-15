@@ -9,6 +9,7 @@ import Matches from './pages/Matches'
 import Admin from './pages/Admin'
 import Trades from './pages/Trades'
 import PlayerStats from './pages/PlayerStats'
+import LeagueStats from './pages/LeagueStats'
 
 function AppRoutes() {
   const { profile, loading } = useAuth()
@@ -42,6 +43,7 @@ function AppRoutes() {
         <Route path="players" element={<Players />} />
         <Route path="matches" element={<Matches />} />
         <Route path="player-stats" element={<PlayerStats />} />
+        <Route path="league-stats" element={<LeagueStats />} />
         <Route path="admin" element={<Admin />} />
 <Route path="trades" element={<Trades />} />
       </Route>
