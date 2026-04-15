@@ -16,6 +16,7 @@ export default function Matches() {
   const [loading, setLoading] = useState(true)
   const [showGuide, setShowGuide] = useState(false)
   const [member, setMember] = useState(null)
+  const [expandedMatch, setExpandedMatch] = useState(null)
   const [showAddMatch, setShowAddMatch] = useState(false)
   const [msg, setMsg] = useState('')
   const [msgType, setMsgType] = useState('success')
@@ -795,30 +796,49 @@ Respond ONLY with a valid JSON object, no markdown, no explanation:
                 {/* My squad performances */}
                 {matchPerfs.length > 0 ? (
                   <>
-                    {matchPerfs.slice(0, 3).map(p => {
-                      const { points } = calculateFantasyPoints(p)
+                    {(expandedMatch === m.id ? matchPerfs : matchPerfs.slice(0, 3)).map(p => {
+                      const { points, breakdown } = calculateFantasyPoints(p)
                       return (
-                        <div key={p.id} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'9px 14px', borderBottom:'1px solid var(--border)' }}>
-                          <div style={{ minWidth:0, flex:1 }}>
-                            <div style={{ fontSize:13, fontWeight:600, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
-                              {players[p.player_id]?.name || 'Player'}
+                        <div key={p.id} style={{ borderBottom:'1px solid var(--border)' }}>
+                          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'9px 14px' }}>
+                            <div style={{ minWidth:0, flex:1 }}>
+                              <div style={{ fontSize:13, fontWeight:600, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
+                                {players[p.player_id]?.name || 'Player'}
+                              </div>
+                              <div style={{ fontSize:11, color:'var(--text3)', marginTop:1 }}>
+                                {p.runs > 0 && `${p.runs}r`}
+                                {p.runs > 0 && (p.wickets > 0 || p.catches > 0) && ' · '}
+                                {p.wickets > 0 && `${p.wickets}w`}
+                                {p.catches > 0 && ` · ${p.catches}c`}
+                              </div>
                             </div>
-                            <div style={{ fontSize:11, color:'var(--text3)', marginTop:1 }}>
-                              {p.runs > 0 && `${p.runs}r`}
-                              {p.runs > 0 && (p.wickets > 0 || p.catches > 0) && ' · '}
-                              {p.wickets > 0 && `${p.wickets}w`}
-                              {p.catches > 0 && ` · ${p.catches}c`}
+                            <div style={{ fontFamily:'Rajdhani', fontSize:20, fontWeight:700, color:points>=0?'var(--teal)':'var(--red)', flexShrink:0, marginLeft:10 }}>
+                              {points >= 0 ? `+${points}` : points}
                             </div>
                           </div>
-                          <div style={{ fontFamily:'Rajdhani', fontSize:20, fontWeight:700, color:points>=0?'var(--teal)':'var(--red)', flexShrink:0, marginLeft:10 }}>
-                            {points >= 0 ? `+${points}` : points}
-                          </div>
+                          {expandedMatch === m.id && breakdown.length > 0 && (
+                            <div style={{ padding:'0 14px 8px', display:'flex', flexWrap:'wrap', gap:4 }}>
+                              {breakdown.map((b, j) => (
+                                <span key={j} style={{ fontSize:10, padding:'2px 6px', borderRadius:5, background:b.pts>0?'rgba(0,212,170,0.08)':'rgba(255,71,87,0.08)', color:b.pts>0?'var(--teal)':'var(--red)', border:`1px solid ${b.pts>0?'rgba(0,212,170,0.15)':'rgba(255,71,87,0.15)'}` }}>
+                                  {b.label}: {b.pts>0?`+${b.pts}`:b.pts}
+                                </span>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       )
                     })}
                     {matchPerfs.length > 3 && (
-                      <div style={{ padding:'8px 14px', fontSize:11, color:'var(--text3)', textAlign:'center', borderBottom:'1px solid var(--border)' }}>
-                        +{matchPerfs.length - 3} more players
+                      <div
+                        onClick={() => setExpandedMatch(expandedMatch === m.id ? null : m.id)}
+                        style={{ padding:'8px 14px', fontSize:11, color:'var(--gold)', textAlign:'center', borderBottom:'1px solid var(--border)', cursor:'pointer', fontWeight:600, background:'rgba(240,165,0,0.03)' }}
+                        onMouseEnter={e => e.currentTarget.style.background='rgba(240,165,0,0.06)'}
+                        onMouseLeave={e => e.currentTarget.style.background='rgba(240,165,0,0.03)'}
+                      >
+                        {expandedMatch === m.id
+                          ? '▲ Show less'
+                          : `▼ View all ${matchPerfs.length} players`
+                        }
                       </div>
                     )}
                   </>

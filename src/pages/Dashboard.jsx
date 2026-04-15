@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { getSelectedLeagueId, setSelectedLeagueId as saveLeagueId } from '../lib/selectedLeague'
+import { aggregatePlayerStats } from '../lib/playerStats'
 
 export default function Dashboard() {
   const { profile } = useAuth()
@@ -330,8 +331,73 @@ const activeId = savedId && leagues.find(l => l.id === savedId) ? savedId : leag
         </div>
       )}
 
+      <TopPerformers profile={profile} league={league} />
       <MySquad profile={profile} league={league} />
       <FriendsSquads profile={profile} league={league} members={members} />
+    </div>
+  )
+}
+
+function TopPerformers({ profile, league }) {
+  const [topPlayers, setTopPlayers] = useState([])
+  const [loading, setLoading] = useState(true)
+  const ROLE_BG = { 'Batsman':'rgba(240,165,0,0.1)','Bowler':'rgba(0,212,170,0.1)','All-Rounder':'rgba(255,71,87,0.1)','WK-Batsman':'rgba(75,159,255,0.1)' }
+  const ROLE_TEXT = { 'Batsman':'var(--gold)','Bowler':'var(--teal)','All-Rounder':'var(--red)','WK-Batsman':'var(--blue)' }
+
+  useEffect(() => { if (profile && league) loadTopPerformers() }, [profile, league])
+
+  async function loadTopPerformers() {
+    setLoading(true)
+    try {
+      const { data: squadData } = await supabase
+        .from('squad').select('player_id')
+        .eq('league_id', league.id).eq('user_id', profile.id)
+      const squadIds = new Set(squadData?.map(s => s.player_id) || [])
+
+      const { data: playerData } = await supabase.from('players').select('*')
+      const playersMap = {}
+      playerData?.forEach(p => { playersMap[p.id] = p })
+
+      const { data: perfs } = await supabase.from('performances').select('*')
+      const aggregated = aggregatePlayerStats(perfs || [], squadIds, playersMap)
+      setTopPlayers(aggregated.slice(0, 5))
+    } catch (e) {
+      console.error('TopPerformers error:', e)
+    }
+    setLoading(false)
+  }
+
+  if (loading || !league || topPlayers.length === 0) return null
+
+  return (
+    <div style={{ marginTop:24 }}>
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:12 }}>
+        <h2 style={{ fontFamily:'Rajdhani', fontSize:20, fontWeight:700 }}>
+          🏆 Top Performers
+        </h2>
+        <a href="/player-stats" style={{ fontSize:12, color:'var(--gold)', textDecoration:'none', fontWeight:600 }}>View all →</a>
+      </div>
+      <div style={{ background:'var(--navy2)', border:'1px solid var(--border)', borderRadius:14, overflow:'hidden' }}>
+        {topPlayers.map((s, i) => (
+          <div key={s.playerId} style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 14px', borderBottom:'1px solid var(--border)' }}>
+            <div style={{ fontSize:i<3?16:12, fontWeight:700, width:24, textAlign:'center', color:i>=3?'var(--text3)':'inherit', flexShrink:0 }}>
+              {i===0?'🥇':i===1?'🥈':i===2?'🥉':i+1}
+            </div>
+            <div style={{ width:30, height:30, borderRadius:8, flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Rajdhani', fontSize:11, fontWeight:700, background:ROLE_BG[s.role], color:ROLE_TEXT[s.role] }}>
+              {s.name?.slice(0,2).toUpperCase()}
+            </div>
+            <div style={{ flex:1, minWidth:0 }}>
+              <div style={{ fontSize:13, fontWeight:600, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{s.name}</div>
+              <div style={{ fontSize:10, color:'var(--text3)', marginTop:1 }}>
+                {s.team} · {s.matchCount} match{s.matchCount!==1?'es':''} · avg {s.avgPoints}/match
+              </div>
+            </div>
+            <div style={{ fontFamily:'Rajdhani', fontSize:20, fontWeight:700, color:'var(--gold)', flexShrink:0 }}>
+              {s.totalPoints}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
