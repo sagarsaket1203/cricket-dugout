@@ -41,21 +41,19 @@ export default function LeagueStats() {
         .order('match_date', { ascending: false })
       setMatches(matchData || [])
 
-      // Aggregate points per user
+      // Aggregate points per user — count ALL completed matches equally for fair comparison
+      const totalCompletedMatches = (matchData || []).filter(m => m.status === 'completed').length
       const pointsMap = {}
-      const matchCountMap = {}
       pointsData?.forEach(p => {
         pointsMap[p.user_id] = (pointsMap[p.user_id] || 0) + p.total_points
-        if (!matchCountMap[p.user_id]) matchCountMap[p.user_id] = new Set()
-        matchCountMap[p.user_id].add(p.match_id)
       })
 
       const enriched = (allMembers || []).map(m => ({
         ...m,
         total_points: pointsMap[m.user_id] || 0,
-        matches_played: matchCountMap[m.user_id]?.size || 0,
-        avg_points: matchCountMap[m.user_id]?.size
-          ? Math.round((pointsMap[m.user_id] || 0) / matchCountMap[m.user_id].size)
+        matches_played: totalCompletedMatches,
+        avg_points: totalCompletedMatches > 0
+          ? Math.round((pointsMap[m.user_id] || 0) / totalCompletedMatches)
           : 0,
       }))
       setMembers(enriched)
