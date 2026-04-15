@@ -442,12 +442,12 @@ Respond ONLY with a valid JSON object, no markdown, no explanation:
       await supabase.from('performances').upsert({
         match_id: matchId,
         player_id: perf.player_id,
-        runs: perf.runs, balls: perf.balls,
+        runs: perf.runs, balls_faced: perf.balls,
         fours: perf.fours, sixes: perf.sixes,
-        wickets: perf.wickets, overs: perf.overs,
-        maidens: perf.maidens, runsConceded: perf.runsConceded,
+        wickets: perf.wickets,
+        maidens: perf.maidens,
         catches: perf.catches, stumpings: perf.stumpings,
-        runOuts: perf.runOuts, dismissalType: perf.dismissalType,
+        run_outs: perf.runOuts,
         fantasy_points: points
       }, { onConflict: 'match_id,player_id' })
 
