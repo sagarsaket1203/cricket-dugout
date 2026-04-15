@@ -12,6 +12,8 @@ export default function Matches() {
   const [mySquadIds, setMySquadIds] = useState(new Set())
   const [league, setLeague] = useState(null)
   const [players, setPlayers] = useState({})
+  const [allUserMatchPoints, setAllUserMatchPoints] = useState({})
+  const [leagueMembers, setLeagueMembers] = useState([])
   const [allPlayers, setAllPlayers] = useState([])
   const [loading, setLoading] = useState(true)
   const [showGuide, setShowGuide] = useState(false)
@@ -78,6 +80,23 @@ export default function Matches() {
           perfMap[p.match_id].push(p)
         })
         setPerformances(perfMap)
+
+        // Fetch all users' match points for the league
+        const { data: allPts } = await supabase
+          .from('match_points').select('*')
+          .eq('league_id', mem.league_id)
+        const allPtsMap = {}
+        allPts?.forEach(p => {
+          if (!allPtsMap[p.match_id]) allPtsMap[p.match_id] = []
+          allPtsMap[p.match_id].push(p)
+        })
+        setAllUserMatchPoints(allPtsMap)
+
+        // Fetch league members with profiles
+        const { data: membersData } = await supabase
+          .from('league_members').select('*, profiles(*)')
+          .eq('league_id', mem.league_id)
+        setLeagueMembers(membersData || [])
       }
 
       const { data: playerData } = await supabase.from('players').select('*').order('name')
@@ -854,6 +873,46 @@ Respond ONLY with a valid JSON object, no markdown, no explanation:
                     <span style={{ fontFamily:'Rajdhani', fontSize:16, fontWeight:700, color:'var(--gold)' }}>+{myPts} pts</span>
                   </div>
                 )}
+
+                {/* League user points for this match */}
+                {(() => {
+                  const userPts = (allUserMatchPoints[m.id] || [])
+                    .map(p => {
+                      const mem2 = leagueMembers.find(lm => lm.user_id === p.user_id)
+                      return { ...p, member: mem2 }
+                    })
+                    .filter(p => p.member)
+                    .sort((a, b) => b.total_points - a.total_points)
+                  if (userPts.length === 0) return null
+                  return (
+                    <div style={{ borderTop:'1px solid var(--border)', background:'rgba(0,212,170,0.02)' }}>
+                      <div style={{ padding:'6px 14px', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                        <span style={{ fontSize:10, color:'var(--text3)', textTransform:'uppercase', letterSpacing:'0.5px', fontWeight:600 }}>League Points</span>
+                        <span style={{ fontSize:10, color:'var(--text3)' }}>{userPts.length} user{userPts.length !== 1 ? 's' : ''}</span>
+                      </div>
+                      {userPts.map(up => {
+                        const isMe2 = up.user_id === profile?.id
+                        return (
+                          <div key={up.user_id} style={{ display:'flex', alignItems:'center', gap:6, padding:'4px 14px', background: isMe2 ? 'rgba(240,165,0,0.04)' : 'transparent' }}>
+                            <div style={{ width:18, height:18, borderRadius:'50%', background:'var(--navy4)', border:'1px solid var(--border2)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:7, fontWeight:700, color:'var(--text2)', flexShrink:0, overflow:'hidden' }}>
+                              {up.member?.profiles?.avatar_url
+                                ? <img src={up.member.profiles.avatar_url} alt="" style={{ width:'100%', height:'100%', objectFit:'cover' }} />
+                                : up.member?.profiles?.name?.slice(0,2).toUpperCase()}
+                            </div>
+                            <div style={{ flex:1, fontSize:11, color: isMe2 ? 'var(--gold)' : 'var(--text2)', fontWeight: isMe2 ? 600 : 400, minWidth:0, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
+                              {up.member?.profiles?.name?.split(' ')[0]}
+                              {isMe2 && <span style={{ fontSize:8, marginLeft:3, color:'var(--gold)', fontWeight:700 }}>YOU</span>}
+                            </div>
+                            <div style={{ fontFamily:'Rajdhani', fontSize:14, fontWeight:700, color: up.total_points > 0 ? 'var(--teal)' : up.total_points < 0 ? 'var(--red)' : 'var(--text3)', flexShrink:0 }}>
+                              {up.total_points > 0 ? `+${up.total_points}` : up.total_points}
+                            </div>
+                          </div>
+                        )
+                      })}
+                      <div style={{ height:4 }} />
+                    </div>
+                  )
+                })()}
 
                 {/* Admin upload section */}
                 {member?.is_admin && (
