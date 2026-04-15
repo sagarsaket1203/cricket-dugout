@@ -15,7 +15,9 @@ export function aggregatePlayerStats(performances, squadPlayerIds, playersMap) {
   for (const perf of performances) {
     if (!squadPlayerIds.has(perf.player_id)) continue
 
-    const { points } = calculateFantasyPoints(perf)
+    const { points: calculatedPoints } = calculateFantasyPoints(perf)
+    // Use calculated points when raw data produces a result; fall back to stored fantasy_points
+    const points = (calculatedPoints !== 0 || !perf.fantasy_points) ? calculatedPoints : perf.fantasy_points
     const player = playersMap[perf.player_id]
     if (!player) continue
 

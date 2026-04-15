@@ -59,19 +59,20 @@ const activeId = savedId && leagues.find(l => l.id === savedId) ? savedId : leag
       const { data: pointsData } = await supabase
         .from('match_points').select('*')
         .eq('league_id', leagueId)
+      // Fetch matches to count total completed for fair comparison
+      const { data: matchData } = await supabase
+        .from('matches').select('id, status')
+      const totalCompletedMatches = (matchData || []).filter(m => m.status === 'completed').length
       const pointsMap = {}
-      const matchCountMap = {}
       pointsData?.forEach(p => {
         pointsMap[p.user_id] = (pointsMap[p.user_id] || 0) + p.total_points
-        if (!matchCountMap[p.user_id]) matchCountMap[p.user_id] = new Set()
-        matchCountMap[p.user_id].add(p.match_id)
       })
       const enriched = (allMembers || []).map(m => ({
         ...m,
         total_points: pointsMap[m.user_id] || 0,
-        matches_played: matchCountMap[m.user_id]?.size || 0,
-        avg_points: matchCountMap[m.user_id]?.size
-          ? Math.round((pointsMap[m.user_id] || 0) / matchCountMap[m.user_id].size)
+        matches_played: totalCompletedMatches,
+        avg_points: totalCompletedMatches > 0
+          ? Math.round((pointsMap[m.user_id] || 0) / totalCompletedMatches)
           : 0,
       })).sort((a, b) => b.total_points - a.total_points)
       setMembers(enriched)
@@ -294,28 +295,45 @@ const activeId = savedId && leagues.find(l => l.id === savedId) ? savedId : leag
           <a href="/league-stats" style={{ fontSize:12, color:'var(--gold)', textDecoration:'none', fontWeight:600 }}>Full stats →</a>
         </div>
         <div style={{ background:'var(--navy2)', border:'1px solid var(--border)', borderRadius:14, overflow:'hidden' }}>
+          {/* Table header */}
+          <div style={{ display:'grid', gridTemplateColumns:'32px 1fr 70px 55px 60px 65px', gap:6, padding:'8px 12px', background:'var(--navy3)', borderBottom:'1px solid var(--border)', alignItems:'center' }}>
+            <div style={{ fontSize:9, color:'var(--text3)', fontWeight:600 }}>#</div>
+            <div style={{ fontSize:9, color:'var(--text3)', fontWeight:600, textTransform:'uppercase', letterSpacing:'0.5px' }}>Name</div>
+            <div style={{ fontSize:9, color:'var(--text3)', fontWeight:600, textTransform:'uppercase', letterSpacing:'0.5px', textAlign:'right' }}>Total Pts</div>
+            <div style={{ fontSize:9, color:'var(--text3)', fontWeight:600, textTransform:'uppercase', letterSpacing:'0.5px', textAlign:'right' }}>Matches</div>
+            <div style={{ fontSize:9, color:'var(--text3)', fontWeight:600, textTransform:'uppercase', letterSpacing:'0.5px', textAlign:'right' }}>Avg/M</div>
+            <div style={{ fontSize:9, color:'var(--text3)', fontWeight:600, textTransform:'uppercase', letterSpacing:'0.5px', textAlign:'right' }}>Purse</div>
+          </div>
           {members.map((m, i) => {
             const isMe = m.user_id === profile?.id
             return (
-              <div key={m.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'12px 14px', borderBottom:'1px solid var(--border)', background:isMe?'rgba(240,165,0,0.04)':'transparent', position:'relative' }}>
+              <div key={m.id} style={{ display:'grid', gridTemplateColumns:'32px 1fr 70px 55px 60px 65px', gap:6, padding:'10px 12px', borderBottom:'1px solid var(--border)', background:isMe?'rgba(240,165,0,0.04)':'transparent', position:'relative', alignItems:'center' }}>
                 {isMe && <div style={{ position:'absolute', left:0, top:0, bottom:0, width:2, background:'var(--gold)' }} />}
-                <div style={{ width:28, height:28, borderRadius:'50%', flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center', fontSize:i<3?16:11, fontWeight:700, background:i<3?'transparent':'var(--navy4)', border:i>=3?'1px solid var(--border)':'none', color:i>=3?'var(--text3)':'inherit' }}>
+                <div style={{ fontSize: i < 3 ? 14 : 12, fontWeight:700, color: i < 3 ? 'inherit' : 'var(--text3)', textAlign:'center' }}>
                   {i===0?'🥇':i===1?'🥈':i===2?'🥉':i+1}
                 </div>
-                <div style={{ width:30, height:30, borderRadius:'50%', background:'var(--navy4)', border:'1px solid var(--border2)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:11, fontWeight:700, color:'var(--text2)', flexShrink:0, overflow:'hidden' }}>
-                  {m.profiles?.avatar_url ? <img src={m.profiles.avatar_url} alt="" style={{ width:'100%', height:'100%', objectFit:'cover' }} /> : m.profiles?.name?.slice(0,2).toUpperCase()}
-                </div>
-                <div style={{ flex:1, minWidth:0 }}>
-                  <div style={{ fontSize:13, fontWeight:600, display:'flex', alignItems:'center', gap:5 }}>
-                    <span style={{ whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{m.profiles?.name}</span>
-                    {isMe && <span style={{ fontSize:9, background:'rgba(240,165,0,0.2)', color:'var(--gold)', borderRadius:4, padding:'1px 5px', fontWeight:700, flexShrink:0 }}>YOU</span>}
+                <div style={{ display:'flex', alignItems:'center', gap:6, minWidth:0 }}>
+                  <div style={{ width:26, height:26, borderRadius:'50%', background:'var(--navy4)', border:'1px solid var(--border2)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:9, fontWeight:700, color:'var(--text2)', flexShrink:0, overflow:'hidden' }}>
+                    {m.profiles?.avatar_url ? <img src={m.profiles.avatar_url} alt="" style={{ width:'100%', height:'100%', objectFit:'cover' }} /> : m.profiles?.name?.slice(0,2).toUpperCase()}
                   </div>
-                  <div style={{ fontSize:11, color:'var(--text3)' }}>
-                    {m.matches_played} match{m.matches_played !== 1 ? 'es' : ''} · avg {m.avg_points}/m · ₹{m.purse_remaining}Cr left
+                  <div style={{ minWidth:0 }}>
+                    <div style={{ fontSize:12, fontWeight:600, display:'flex', alignItems:'center', gap:4, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
+                      <span style={{ overflow:'hidden', textOverflow:'ellipsis' }}>{m.profiles?.name}</span>
+                      {isMe && <span style={{ fontSize:8, background:'rgba(240,165,0,0.2)', color:'var(--gold)', borderRadius:3, padding:'1px 4px', fontWeight:700, flexShrink:0 }}>YOU</span>}
+                    </div>
                   </div>
                 </div>
-                <div style={{ fontFamily:'Rajdhani', fontSize:22, fontWeight:700, color:isMe?'var(--gold)':'var(--text)', flexShrink:0 }}>
+                <div style={{ fontFamily:'Rajdhani', fontSize:18, fontWeight:700, color:isMe?'var(--gold)':'var(--text)', textAlign:'right' }}>
                   {m.total_points.toLocaleString()}
+                </div>
+                <div style={{ fontSize:12, color:'var(--text2)', textAlign:'right' }}>
+                  {m.matches_played}
+                </div>
+                <div style={{ fontSize:12, color:'var(--teal)', fontWeight:600, textAlign:'right' }}>
+                  {m.avg_points}
+                </div>
+                <div style={{ fontSize:11, color:'var(--text2)', textAlign:'right' }}>
+                  ₹{m.purse_remaining}Cr
                 </div>
               </div>
             )
