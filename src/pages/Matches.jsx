@@ -431,206 +431,78 @@ Respond ONLY with a valid JSON object, no markdown, no explanation:
   }
 
   async function savePerformances() {
-    console.log('🚀 savePerformances() called')
-
-    // --- Validation ---
-    if (!extractedPerfs) {
-      console.warn('❌ extractedPerfs is null/undefined, aborting')
-      showMsg('❌ No extracted performances to save.', 'error')
-      return
-    }
-
-    const { performances: perfs, matchId } = extractedPerfs
-    console.log('📋 extractedPerfs:', { matchId, totalPerformances: perfs?.length, performances: perfs })
-
-    if (!matchId) {
-      console.error('❌ matchId is missing from extractedPerfs')
-      showMsg('❌ No match selected. Please select a match first.', 'error')
-      return
-    }
-
-    if (!perfs || perfs.length === 0) {
-      console.error('❌ performances array is empty or missing')
-      showMsg('❌ No performances extracted. Please extract scorecard first.', 'error')
-      return
-    }
-
-    const validPerfs = perfs.filter(p => p.player_id && p.include)
-    console.log(`✅ ${validPerfs.length} valid performances (with player_id and include=true) out of ${perfs.length} total`)
-
-    if (validPerfs.length === 0) {
-      console.warn('❌ No valid performances to save (all filtered out)')
-      showMsg('❌ No valid performances to save. Ensure players are matched and included.', 'error')
-      return
-    }
-
+    if (!extractedPerfs) return
     setSavingPerfs(true)
+    const { performances: perfs, matchId } = extractedPerfs
     let saved = 0
-    let errors = []
 
-    try {
-      for (const perf of perfs) {
-        if (!perf.player_id || !perf.include) {
-          console.log(`⏭️ Skipping player: ${perf.name || 'unknown'} (player_id=${perf.player_id}, include=${perf.include})`)
-          continue
-        }
+    for (const perf of perfs) {
+      if (!perf.player_id || !perf.include) continue
+      const { points } = calculateFantasyPoints(perf)
 
-        console.log(`\n--- Processing: ${perf.name || perf.player_id} ---`)
-        console.log('📊 Raw perf data:', JSON.stringify(perf, null, 2))
+      const balls = perf.balls ?? perf.balls_faced ?? 0
+      const runOuts = perf.runOuts ?? perf.run_outs ?? 0
+      const dismissalType = perf.dismissalType ?? perf.dismissal_type ?? ''
+      const runsConceded = perf.runsConceded ?? perf.runs_conceded ?? 0
+      const overs = perf.overs ?? 0
+      const isDuck = perf.runs === 0 && balls > 0 && dismissalType && dismissalType.toLowerCase() !== 'not out'
+      const isLbw = dismissalType ? dismissalType.toLowerCase().includes('lbw') : false
+      const isBowled = dismissalType ? dismissalType.toLowerCase().includes('bowled') : false
+      const economy = overs > 0 ? runsConceded / overs : null
 
-        const { points } = calculateFantasyPoints(perf)
-        console.log(`🎯 Fantasy points calculated: ${points}`)
+      await supabase.from('performances').upsert({
+        match_id: matchId,
+        player_id: perf.player_id,
+        runs: perf.runs, balls_faced: balls,
+        fours: perf.fours, sixes: perf.sixes,
+        wickets: perf.wickets,
+        maidens: perf.maidens,
+        catches: perf.catches, stumpings: perf.stumpings,
+        run_outs: runOuts,
+        fantasy_points: points
+      }, { onConflict: 'match_id,player_id' })
 
-        const balls = perf.balls ?? perf.balls_faced ?? 0
-        const runOuts = perf.runOuts ?? perf.run_outs ?? 0
-        const dismissalType = perf.dismissalType ?? perf.dismissal_type ?? ''
-        const runsConceded = perf.runsConceded ?? perf.runs_conceded ?? 0
-        const overs = perf.overs ?? 0
-        const isDuck = perf.runs === 0 && balls > 0 && dismissalType && dismissalType.toLowerCase() !== 'not out'
-        const isLbw = dismissalType ? dismissalType.toLowerCase().includes('lbw') : false
-        const isBowled = dismissalType ? dismissalType.toLowerCase().includes('bowled') : false
-        const economy = overs > 0 ? runsConceded / overs : null
-
-        // --- Step 1: Insert into performances ---
-        const perfData = {
+      // Find all users who have this player in their squad
+      const { data: sq } = await supabase.from('squad').select('user_id, league_id')
+        .eq('player_id', perf.player_id)
+      for (const s of sq || []) {
+        // Insert into player_match_performances for each squad owner
+        await supabase.from('player_match_performances').upsert({
           match_id: matchId,
           player_id: perf.player_id,
-          runs: perf.runs ?? 0, balls_faced: balls,
-          fours: perf.fours ?? 0, sixes: perf.sixes ?? 0,
-          wickets: perf.wickets ?? 0,
-          maidens: perf.maidens ?? 0,
-          catches: perf.catches ?? 0, stumpings: perf.stumpings ?? 0,
+          user_id: s.user_id,
+          league_id: s.league_id,
+          runs: perf.runs,
+          balls_faced: balls,
+          wickets: perf.wickets,
+          catches: perf.catches,
+          stumpings: perf.stumpings,
           run_outs: runOuts,
+          maidens: perf.maidens,
+          fours: perf.fours,
+          sixes: perf.sixes,
+          economy,
+          is_duck: isDuck,
+          is_lbw: isLbw,
+          is_bowled: isBowled,
           fantasy_points: points
-        }
-        console.log('📝 [Step 1] Inserting into performances:', JSON.stringify(perfData, null, 2))
+        }, { onConflict: 'match_id,player_id,user_id' })
 
-        const { error: perfError } = await supabase.from('performances').insert(perfData)
-
-        if (perfError) {
-          if (perfError.code === '23505') {
-            console.log(`ℹ️ [Step 1] Performance already exists for ${perf.name || perf.player_id}, skipping`)
-          } else {
-            console.error(`❌ [Step 1] Performance insert FAILED for ${perf.name || perf.player_id}:`, perfError)
-            errors.push(`❌ Performance save failed for ${perf.name || perf.player_id}: ${perfError.message}`)
-            continue
-          }
+        // Update match_points totals
+        const { data: ex } = await supabase.from('match_points').select('*')
+          .eq('match_id', matchId).eq('user_id', s.user_id).eq('league_id', s.league_id).maybeSingle()
+        if (ex) {
+          await supabase.from('match_points').update({ total_points: ex.total_points + points }).eq('id', ex.id)
         } else {
-          console.log(`✅ [Step 1] Performance inserted successfully for ${perf.name || perf.player_id}`)
+          await supabase.from('match_points').insert({
+            match_id: matchId, user_id: s.user_id, league_id: s.league_id, total_points: points
+          })
         }
-
-        // --- Step 2: Query squad for this player ---
-        console.log(`🔍 [Step 2] Querying squad for player_id=${perf.player_id}`)
-        const { data: sq, error: sqError } = await supabase.from('squad').select('user_id, league_id')
-          .eq('player_id', perf.player_id)
-
-        if (sqError) {
-          console.error(`❌ [Step 2] Squad query FAILED for ${perf.name || perf.player_id}:`, sqError)
-          errors.push(`❌ Squad query failed for ${perf.name || perf.player_id}: ${sqError.message}`)
-          continue
-        }
-        console.log(`✅ [Step 2] Squad query returned ${sq?.length ?? 0} entries:`, JSON.stringify(sq, null, 2))
-
-        if (!sq || sq.length === 0) {
-          console.log(`ℹ️ No squad owners found for player ${perf.name || perf.player_id} — skipping player_match_performances`)
-        }
-
-        for (const s of sq || []) {
-          if (!s.user_id || !s.league_id) {
-            console.warn(`⚠️ Skipping squad entry with missing user_id or league_id:`, JSON.stringify(s))
-            errors.push(`⚠️ Squad entry for ${perf.name || perf.player_id} has missing user_id or league_id`)
-            continue
-          }
-
-          // --- Step 3: Insert into player_match_performances ---
-          const pmpData = {
-            match_id: matchId,
-            player_id: perf.player_id,
-            user_id: s.user_id,
-            league_id: s.league_id,
-            runs: perf.runs ?? 0,
-            balls_faced: balls,
-            wickets: perf.wickets ?? 0,
-            catches: perf.catches ?? 0,
-            stumpings: perf.stumpings ?? 0,
-            run_outs: runOuts,
-            maidens: perf.maidens ?? 0,
-            fours: perf.fours ?? 0,
-            sixes: perf.sixes ?? 0,
-            economy,
-            is_duck: isDuck,
-            is_lbw: isLbw,
-            is_bowled: isBowled,
-            fantasy_points: points
-          }
-          console.log(`📝 [Step 3] Inserting player_match_performance for user=${s.user_id}, league=${s.league_id}:`, JSON.stringify(pmpData, null, 2))
-
-          const { error: pmpError } = await supabase.from('player_match_performances').insert(pmpData)
-
-          if (pmpError) {
-            if (pmpError.code === '23505') {
-              console.log(`ℹ️ [Step 3] player_match_performance already exists for ${perf.name || perf.player_id} (user ${s.user_id}, league ${s.league_id}), skipping`)
-            } else {
-              console.error(`❌ [Step 3] player_match_performances insert FAILED for ${perf.name || perf.player_id} (user ${s.user_id}, league ${s.league_id}):`, pmpError)
-              errors.push(`❌ Failed to save player_match_performance for ${perf.name || perf.player_id} (user ${s.user_id}): ${pmpError.message}`)
-              continue
-            }
-          } else {
-            console.log(`✅ [Step 3] player_match_performance saved for ${perf.name || perf.player_id} (user=${s.user_id}, league=${s.league_id})`)
-          }
-
-          // --- Step 4: Update match_points totals ---
-          console.log(`🔍 [Step 4] Querying match_points for match=${matchId}, user=${s.user_id}, league=${s.league_id}`)
-          const { data: ex, error: exError } = await supabase.from('match_points').select('*')
-            .eq('match_id', matchId).eq('user_id', s.user_id).eq('league_id', s.league_id).maybeSingle()
-
-          if (exError) {
-            console.error(`❌ [Step 4] match_points query FAILED:`, exError)
-            errors.push(`❌ Failed to query match_points for user ${s.user_id}: ${exError.message}`)
-            continue
-          }
-          console.log(`✅ [Step 4] match_points query result:`, JSON.stringify(ex, null, 2))
-
-          if (ex) {
-            const newTotal = ex.total_points + points
-            console.log(`📝 [Step 4a] Updating match_points id=${ex.id}: ${ex.total_points} + ${points} = ${newTotal}`)
-            const { error: updateError } = await supabase.from('match_points').update({ total_points: newTotal }).eq('id', ex.id)
-            if (updateError) {
-              console.error(`❌ [Step 4a] match_points UPDATE failed:`, updateError)
-              errors.push(`❌ Failed to update match_points for user ${s.user_id}: ${updateError.message}`)
-            } else {
-              console.log(`✅ [Step 4a] match_points updated successfully`)
-            }
-          } else {
-            const mpInsert = { match_id: matchId, user_id: s.user_id, league_id: s.league_id, total_points: points }
-            console.log(`📝 [Step 4b] Inserting new match_points:`, JSON.stringify(mpInsert, null, 2))
-            const { error: insertError } = await supabase.from('match_points').insert(mpInsert)
-            if (insertError) {
-              console.error(`❌ [Step 4b] match_points INSERT failed:`, insertError)
-              errors.push(`❌ Failed to insert match_points for user ${s.user_id}: ${insertError.message}`)
-            } else {
-              console.log(`✅ [Step 4b] match_points inserted successfully`)
-            }
-          }
-        }
-        saved++
-        console.log(`✅ Player ${perf.name || perf.player_id} fully processed (saved count: ${saved})`)
       }
-
-      console.log(`\n🏁 savePerformances complete: ${saved} saved, ${errors.length} errors`)
-
-      if (errors.length > 0) {
-        console.error('savePerformances errors:', errors)
-        const displayErrors = errors.length <= 3 ? errors.join('\n') : errors.slice(0, 3).join('\n') + `\n...and ${errors.length - 3} more error(s). Check console for details.`
-        showMsg(`⚠️ Saved ${saved} performances but ${errors.length} error(s):\n${displayErrors}`, 'error')
-      } else {
-        showMsg(`✅ Saved ${saved} performances! Fantasy points updated.`, 'success')
-      }
-    } catch (err) {
-      console.error('❌ savePerformances unexpected error:', err)
-      showMsg(`❌ Unexpected error saving performances: ${err.message}`, 'error')
+      saved++
     }
 
+    showMsg(`✅ Saved ${saved} performances! Fantasy points updated.`, 'success')
     setExtractedPerfs(null)
     setSelectedMatch(null)
     setManualScorecard({ match_id: null, batting: '', bowling: '', fielding: '' })
