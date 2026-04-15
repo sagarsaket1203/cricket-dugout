@@ -130,6 +130,7 @@ export default function Matches() {
 
   async function deleteMatch(matchId) {
     if (!confirm('Delete this match and all its performances?')) return
+    await supabase.from('player_match_performances').delete().eq('match_id', matchId)
     await supabase.from('match_points').delete().eq('match_id', matchId)
     await supabase.from('performances').delete().eq('match_id', matchId)
     await supabase.from('matches').delete().eq('id', matchId)
@@ -439,22 +440,55 @@ Respond ONLY with a valid JSON object, no markdown, no explanation:
       if (!perf.player_id || !perf.include) continue
       const { points } = calculateFantasyPoints(perf)
 
+      const balls = perf.balls ?? perf.balls_faced ?? 0
+      const runOuts = perf.runOuts ?? perf.run_outs ?? 0
+      const dismissalType = perf.dismissalType ?? perf.dismissal_type ?? ''
+      const runsConceded = perf.runsConceded ?? perf.runs_conceded ?? 0
+      const overs = perf.overs ?? 0
+      const isDuck = perf.runs === 0 && balls > 0 && dismissalType && dismissalType.toLowerCase() !== 'not out'
+      const isLbw = dismissalType ? dismissalType.toLowerCase().includes('lbw') : false
+      const isBowled = dismissalType ? dismissalType.toLowerCase().includes('bowled') : false
+      const economy = overs > 0 ? runsConceded / overs : null
+
       await supabase.from('performances').upsert({
         match_id: matchId,
         player_id: perf.player_id,
-        runs: perf.runs, balls_faced: perf.balls,
+        runs: perf.runs, balls_faced: balls,
         fours: perf.fours, sixes: perf.sixes,
         wickets: perf.wickets,
         maidens: perf.maidens,
         catches: perf.catches, stumpings: perf.stumpings,
-        run_outs: perf.runOuts,
+        run_outs: runOuts,
         fantasy_points: points
       }, { onConflict: 'match_id,player_id' })
 
-      // Update match points for all leagues
+      // Find all users who have this player in their squad
       const { data: sq } = await supabase.from('squad').select('user_id, league_id')
         .eq('player_id', perf.player_id)
       for (const s of sq || []) {
+        // Insert into player_match_performances for each squad owner
+        await supabase.from('player_match_performances').upsert({
+          match_id: matchId,
+          player_id: perf.player_id,
+          user_id: s.user_id,
+          league_id: s.league_id,
+          runs: perf.runs,
+          balls_faced: balls,
+          wickets: perf.wickets,
+          catches: perf.catches,
+          stumpings: perf.stumpings,
+          run_outs: runOuts,
+          maidens: perf.maidens,
+          fours: perf.fours,
+          sixes: perf.sixes,
+          economy,
+          is_duck: isDuck,
+          is_lbw: isLbw,
+          is_bowled: isBowled,
+          fantasy_points: points
+        }, { onConflict: 'match_id,player_id,user_id' })
+
+        // Update match_points totals
         const { data: ex } = await supabase.from('match_points').select('*')
           .eq('match_id', matchId).eq('user_id', s.user_id).eq('league_id', s.league_id).maybeSingle()
         if (ex) {

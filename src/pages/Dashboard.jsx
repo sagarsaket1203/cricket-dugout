@@ -379,18 +379,45 @@ function TopPerformers({ profile, league }) {
   async function loadTopPerformers() {
     setLoading(true)
     try {
-      const { data: squadData } = await supabase
-        .from('squad').select('player_id')
-        .eq('league_id', league.id).eq('user_id', profile.id)
-      const squadIds = new Set(squadData?.map(s => s.player_id) || [])
-
       const { data: playerData } = await supabase.from('players').select('*')
       const playersMap = {}
       playerData?.forEach(p => { playersMap[p.id] = p })
 
-      const { data: perfs } = await supabase.from('performances').select('*')
-      const aggregated = aggregatePlayerStats(perfs || [], squadIds, playersMap)
-      setTopPlayers(aggregated.slice(0, 5))
+      // Try player_match_performances first (new table, user-specific)
+      const { data: pmpData } = await supabase
+        .from('player_match_performances').select('*')
+        .eq('user_id', profile.id)
+        .eq('league_id', league.id)
+
+      if (pmpData && pmpData.length > 0) {
+        const statsMap = {}
+        for (const perf of pmpData) {
+          const player = playersMap[perf.player_id]
+          if (!player) continue
+          if (!statsMap[perf.player_id]) {
+            statsMap[perf.player_id] = {
+              playerId: perf.player_id, name: player.name, role: player.role, team: player.team,
+              totalPoints: 0, matchCount: 0,
+            }
+          }
+          statsMap[perf.player_id].totalPoints += perf.fantasy_points || 0
+          statsMap[perf.player_id].matchCount += 1
+        }
+        const aggregated = Object.values(statsMap)
+          .map(s => ({ ...s, avgPoints: s.matchCount > 0 ? Math.round(s.totalPoints / s.matchCount) : 0 }))
+          .sort((a, b) => b.totalPoints - a.totalPoints)
+        setTopPlayers(aggregated.slice(0, 5))
+      } else {
+        // Fallback: legacy performances table
+        const { data: squadData } = await supabase
+          .from('squad').select('player_id')
+          .eq('league_id', league.id).eq('user_id', profile.id)
+        const squadIds = new Set(squadData?.map(s => s.player_id) || [])
+
+        const { data: perfs } = await supabase.from('performances').select('*')
+        const aggregated = aggregatePlayerStats(perfs || [], squadIds, playersMap)
+        setTopPlayers(aggregated.slice(0, 5))
+      }
     } catch (e) {
       console.error('TopPerformers error:', e)
     }
