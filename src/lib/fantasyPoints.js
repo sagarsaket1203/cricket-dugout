@@ -5,6 +5,13 @@ export function calculateFantasyPoints(perf) {
   let points = 0
   const breakdown = []
 
+  // Normalize field names: support both camelCase (in-memory) and snake_case (DB)
+  const balls = perf.balls ?? perf.balls_faced ?? 0
+  const runOuts = perf.runOuts ?? perf.run_outs ?? 0
+  const dismissalType = perf.dismissalType ?? perf.dismissal_type ?? null
+  const runsConceded = perf.runsConceded ?? perf.runs_conceded ?? undefined
+  const overs = perf.overs ?? 0
+
   // --- BATTING ---
   // 1. Run scored: +1
   if (perf.runs > 0) {
@@ -39,8 +46,8 @@ export function calculateFantasyPoints(perf) {
   }
 
   // 7. Duck (batsman): -2
-  if (perf.runs === 0 && perf.balls > 0) {
-    const dismissed = perf.dismissalType && perf.dismissalType.toLowerCase() !== 'not out'
+  if (perf.runs === 0 && balls > 0) {
+    const dismissed = dismissalType && dismissalType.toLowerCase() !== 'not out'
     if (dismissed) {
       points -= 2
       breakdown.push({ label: 'Duck penalty', pts: -2 })
@@ -49,8 +56,8 @@ export function calculateFantasyPoints(perf) {
 
   // 8. SR 170+ bonus: +6 (min 10 balls)
   // 9. SR <50 penalty: -6
-  if (perf.balls >= 10) {
-    const sr = (perf.runs / perf.balls) * 100
+  if (balls >= 10) {
+    const sr = (perf.runs / balls) * 100
     if (sr >= 170) {
       points += 6
       breakdown.push({ label: 'SR 170+ bonus', pts: 6 })
@@ -69,9 +76,9 @@ export function calculateFantasyPoints(perf) {
   }
 
   // 11. LBW / Bowled bonus: +8
-  if (perf.wickets > 0 && perf.dismissalType) {
-    const isLbwOrBowled = perf.dismissalType.toLowerCase().includes('lbw') || 
-                          perf.dismissalType.toLowerCase().includes('bowled')
+  if (perf.wickets > 0 && dismissalType) {
+    const isLbwOrBowled = dismissalType.toLowerCase().includes('lbw') || 
+                          dismissalType.toLowerCase().includes('bowled')
     if (isLbwOrBowled) {
       points += 8
       breakdown.push({ label: 'LBW / Bowled bonus', pts: 8 })
@@ -99,8 +106,8 @@ export function calculateFantasyPoints(perf) {
 
   // 16. Economy ≤5: +6 (min 1 over)
   // 17. Economy 12+: -6
-  if (perf.overs >= 1 && perf.runsConceded !== undefined) {
-    const economy = perf.runsConceded / perf.overs
+  if (overs >= 1 && runsConceded !== undefined) {
+    const economy = runsConceded / overs
     if (economy <= 5) {
       points += 6
       breakdown.push({ label: 'Economy ≤5 bonus', pts: 6 })
@@ -126,10 +133,10 @@ export function calculateFantasyPoints(perf) {
   }
 
   // 20. Run out (direct): +12
-  if (perf.runOuts > 0) {
-    const rop = perf.runOuts * 12
+  if (runOuts > 0) {
+    const rop = runOuts * 12
     points += rop
-    breakdown.push({ label: `${perf.runOuts} run out(s)`, pts: rop })
+    breakdown.push({ label: `${runOuts} run out(s)`, pts: rop })
   }
 
   return { points: Math.round(points), breakdown }
