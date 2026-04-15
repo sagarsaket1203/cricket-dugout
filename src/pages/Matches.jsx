@@ -491,7 +491,7 @@ Respond ONLY with a valid JSON object, no markdown, no explanation:
         const isBowled = dismissalType ? dismissalType.toLowerCase().includes('bowled') : false
         const economy = overs > 0 ? runsConceded / overs : null
 
-        // --- Step 1: Upsert into performances ---
+        // --- Step 1: Insert into performances ---
         const perfData = {
           match_id: matchId,
           player_id: perf.player_id,
@@ -503,16 +503,21 @@ Respond ONLY with a valid JSON object, no markdown, no explanation:
           run_outs: runOuts,
           fantasy_points: points
         }
-        console.log('📝 [Step 1] Upserting into performances:', JSON.stringify(perfData, null, 2))
+        console.log('📝 [Step 1] Inserting into performances:', JSON.stringify(perfData, null, 2))
 
-        const { error: perfError } = await supabase.from('performances').upsert(perfData, { onConflict: 'match_id,player_id' })
+        const { error: perfError } = await supabase.from('performances').insert(perfData)
 
         if (perfError) {
-          console.error(`❌ [Step 1] Performance upsert FAILED for ${perf.name || perf.player_id}:`, perfError)
-          errors.push(`❌ Performance save failed for ${perf.name || perf.player_id}: ${perfError.message}`)
-          continue
+          if (perfError.code === '23505') {
+            console.log(`ℹ️ [Step 1] Performance already exists for ${perf.name || perf.player_id}, skipping`)
+          } else {
+            console.error(`❌ [Step 1] Performance insert FAILED for ${perf.name || perf.player_id}:`, perfError)
+            errors.push(`❌ Performance save failed for ${perf.name || perf.player_id}: ${perfError.message}`)
+            continue
+          }
+        } else {
+          console.log(`✅ [Step 1] Performance inserted successfully for ${perf.name || perf.player_id}`)
         }
-        console.log(`✅ [Step 1] Performance upserted successfully for ${perf.name || perf.player_id}`)
 
         // --- Step 2: Query squad for this player ---
         console.log(`🔍 [Step 2] Querying squad for player_id=${perf.player_id}`)
@@ -537,7 +542,7 @@ Respond ONLY with a valid JSON object, no markdown, no explanation:
             continue
           }
 
-          // --- Step 3: Upsert into player_match_performances ---
+          // --- Step 3: Insert into player_match_performances ---
           const pmpData = {
             match_id: matchId,
             player_id: perf.player_id,
@@ -558,16 +563,21 @@ Respond ONLY with a valid JSON object, no markdown, no explanation:
             is_bowled: isBowled,
             fantasy_points: points
           }
-          console.log(`📝 [Step 3] Upserting player_match_performance for user=${s.user_id}, league=${s.league_id}:`, JSON.stringify(pmpData, null, 2))
+          console.log(`📝 [Step 3] Inserting player_match_performance for user=${s.user_id}, league=${s.league_id}:`, JSON.stringify(pmpData, null, 2))
 
-          const { error: pmpError } = await supabase.from('player_match_performances').upsert(pmpData, { onConflict: 'match_id,player_id,user_id' })
+          const { error: pmpError } = await supabase.from('player_match_performances').insert(pmpData)
 
           if (pmpError) {
-            console.error(`❌ [Step 3] player_match_performances upsert FAILED for ${perf.name || perf.player_id} (user ${s.user_id}, league ${s.league_id}):`, pmpError)
-            errors.push(`❌ Failed to save player_match_performance for ${perf.name || perf.player_id} (user ${s.user_id}): ${pmpError.message}`)
-            continue
+            if (pmpError.code === '23505') {
+              console.log(`ℹ️ [Step 3] player_match_performance already exists for ${perf.name || perf.player_id} (user ${s.user_id}, league ${s.league_id}), skipping`)
+            } else {
+              console.error(`❌ [Step 3] player_match_performances insert FAILED for ${perf.name || perf.player_id} (user ${s.user_id}, league ${s.league_id}):`, pmpError)
+              errors.push(`❌ Failed to save player_match_performance for ${perf.name || perf.player_id} (user ${s.user_id}): ${pmpError.message}`)
+              continue
+            }
+          } else {
+            console.log(`✅ [Step 3] player_match_performance saved for ${perf.name || perf.player_id} (user=${s.user_id}, league=${s.league_id})`)
           }
-          console.log(`✅ [Step 3] player_match_performance saved for ${perf.name || perf.player_id} (user=${s.user_id}, league=${s.league_id})`)
 
           // --- Step 4: Update match_points totals ---
           console.log(`🔍 [Step 4] Querying match_points for match=${matchId}, user=${s.user_id}, league=${s.league_id}`)
