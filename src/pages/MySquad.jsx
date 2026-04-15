@@ -33,17 +33,20 @@ export default function MySquad() {
 
     const map = {}
     if (perfData) {
+      const matchIds = {} // track unique match_ids per player
       for (const p of perfData) {
         if (!map[p.player_id]) {
           map[p.player_id] = { totalRuns: 0, totalWickets: 0, totalCatches: 0, totalPoints: 0, matchCount: 0 }
+          matchIds[p.player_id] = new Set()
         }
         map[p.player_id].totalRuns += p.runs || 0
         map[p.player_id].totalWickets += p.wickets || 0
         map[p.player_id].totalCatches += p.catches || 0
         map[p.player_id].totalPoints += p.fantasy_points || 0
-        map[p.player_id].matchCount += 1
+        matchIds[p.player_id].add(p.match_id)
       }
       for (const id of Object.keys(map)) {
+        map[id].matchCount = matchIds[id].size
         map[id].avgPoints = map[id].matchCount > 0 ? Math.round(map[id].totalPoints / map[id].matchCount) : 0
       }
     }
