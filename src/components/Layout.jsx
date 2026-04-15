@@ -8,6 +8,7 @@ const ADMIN_EMAIL = 'sagarsaket120305@gmail.com'
 const NAV = [
   { to: '/', label: 'Dashboard', icon: '⚡' },
   { to: '/auction', label: 'Auction', icon: '🔨' },
+  { to: '/my-squad', label: 'My Squad', icon: '👥' },
   { to: '/players', label: 'Players', icon: '🏏' },
   { to: '/matches', label: 'Matches', icon: '📊' },
   { to: '/league-stats', label: 'League Stats', icon: '🏆' },
