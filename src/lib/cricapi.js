@@ -1,4 +1,4 @@
-const CRICAPI_KEY = 'ad9de024-29c6-4cda-9749-4784da6429a5'
+const CRICAPI_KEY = import.meta.env.VITE_CRICAPI_KEY
 
 export async function fetchCurrentMatches() {
   try {

@@ -271,75 +271,11 @@ export default function Matches() {
 
       const mediaType = file.type || 'image/jpeg'
 
-      // Call Claude API
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
+      // Call backend API to process image with Claude
+      const response = await fetch('/api/scorecard', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 4000,
-          messages: [{
-            role: 'user',
-            content: [
-              {
-                type: 'image',
-                source: { type: 'base64', media_type: mediaType, data: base64 }
-              },
-              {
-                type: 'text',
-                text: `You are analyzing an IPL cricket scorecard image. Extract ALL player performances from this scorecard.
-
-For EVERY batsman shown, extract:
-- name (exact as shown)
-- runs scored
-- balls faced
-- fours hit
-- sixes hit
-- how they got out (bowled/lbw/caught/run out/stumped/not out)
-
-For EVERY bowler shown, extract:
-- name (exact as shown)
-- overs bowled
-- maidens
-- runs conceded
-- wickets taken
-
-For fielding, if visible extract catches/stumpings/run outs.
-
-Respond ONLY with a valid JSON object, no markdown, no explanation:
-{
-  "batting": [
-    {
-      "name": "Virat Kohli",
-      "runs": 72,
-      "balls": 43,
-      "fours": 8,
-      "sixes": 2,
-      "dismissal": "not out"
-    }
-  ],
-  "bowling": [
-    {
-      "name": "Jasprit Bumrah",
-      "overs": 4.0,
-      "maidens": 1,
-      "runsConceded": 22,
-      "wickets": 3
-    }
-  ],
-  "fielding": [
-    {
-      "name": "MS Dhoni",
-      "catches": 2,
-      "stumpings": 1,
-      "runOuts": 0
-    }
-  ]
-}`
-              }
-            ]
-          }]
-        })
+        body: JSON.stringify({ base64, mediaType })
       })
 
       const data = await response.json()
