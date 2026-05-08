@@ -441,7 +441,7 @@ export default function Matches() {
             is_lbw: isLbw,
             is_bowled: isBowled,
             fantasy_points: fantasyPoints
-          }, { onConflict: 'match_id,player_id,user_id' })
+          }, { onConflict: 'match_id,player_id,user_id,league_id' })
           if (pmpUpsertError) throw pmpUpsertError
 
           // Update match_points totals

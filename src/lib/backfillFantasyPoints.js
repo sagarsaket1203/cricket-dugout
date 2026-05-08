@@ -120,7 +120,7 @@ export async function backfillFantasyPoints(onProgress) {
             is_lbw: isLbw,
             is_bowled: isBowled,
             fantasy_points: points
-          }, { onConflict: 'match_id,player_id,user_id' })
+          }, { onConflict: 'match_id,player_id,user_id,league_id' })
           if (!pmpErr) pmpCreated++
         }
       }
