@@ -376,7 +376,11 @@ export default function Matches() {
       for (const perf of perfs) {
         if (!perf.player_id || !perf.include) continue
         const calculated = calculateFantasyPoints(perf)
-        const fantasyPoints = Number.isFinite(calculated?.points) ? Math.round(calculated.points) : 0
+        const hasValidFantasyPoints = Number.isFinite(calculated?.points)
+        if (!hasValidFantasyPoints) {
+          console.warn('calculateFantasyPoints returned invalid points, defaulting to 0:', { player_id: perf.player_id, match_id: matchId })
+        }
+        const fantasyPoints = hasValidFantasyPoints ? Math.round(calculated.points) : 0
 
         const balls = perf.balls ?? perf.balls_faced ?? 0
         const runOuts = perf.runOuts ?? perf.run_outs ?? 0

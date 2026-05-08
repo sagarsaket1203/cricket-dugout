@@ -47,7 +47,7 @@ export default function PlayerStats() {
       }
 
       const hasPmpData = !!(pmpData && pmpData.length > 0)
-      const hasMissingPmpPoints = hasPmpData && pmpData.some(perf => perf.fantasy_points == null)
+      const hasMissingPmpPoints = hasPmpData && pmpData.some(perf => perf.fantasy_points === null || perf.fantasy_points === undefined)
 
       if (hasPmpData && !hasMissingPmpPoints) {
         const pmpPlayerIds = new Set(pmpData.map(p => p.player_id))
