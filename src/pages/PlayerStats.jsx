@@ -2,10 +2,39 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { getSelectedLeagueId } from '../lib/selectedLeague'
-import { aggregatePlayerStats } from '../lib/playerStats'
 
 const ROLE_BG = { 'Batsman':'rgba(240,165,0,0.1)','Bowler':'rgba(0,212,170,0.1)','All-Rounder':'rgba(255,71,87,0.1)','WK-Batsman':'rgba(75,159,255,0.1)' }
 const ROLE_TEXT = { 'Batsman':'var(--gold)','Bowler':'var(--teal)','All-Rounder':'var(--red)','WK-Batsman':'var(--blue)' }
+
+function aggregateStoredStats(performances, playersMap) {
+  const statsMap = {}
+
+  for (const perf of performances || []) {
+    const player = playersMap[perf.player_id]
+    if (!player) continue
+
+    if (!statsMap[perf.player_id]) {
+      statsMap[perf.player_id] = {
+        playerId: perf.player_id,
+        name: player.name,
+        role: player.role,
+        team: player.team,
+        totalPoints: 0,
+        matchCount: 0,
+        matches: [],
+      }
+    }
+
+    const points = Number.isFinite(perf.fantasy_points) ? perf.fantasy_points : 0
+    statsMap[perf.player_id].totalPoints += points
+    statsMap[perf.player_id].matchCount += 1
+    statsMap[perf.player_id].matches.push({ matchId: perf.match_id, points })
+  }
+
+  return Object.values(statsMap)
+    .map(s => ({ ...s, avgPoints: s.matchCount > 0 ? Math.round(s.totalPoints / s.matchCount) : 0 }))
+    .sort((a, b) => b.totalPoints - a.totalPoints)
+}
 
 export default function PlayerStats() {
   const { profile } = useAuth()
@@ -37,51 +66,42 @@ export default function PlayerStats() {
       matchData?.forEach(m => { matchMap[m.id] = m })
       setMatches(matchMap)
 
-      // Try to load from player_match_performances first (new table)
       const { data: pmpData, error: pmpError } = await supabase
         .from('player_match_performances').select('*')
         .eq('user_id', profile.id)
         .eq('league_id', mem.league_id)
       if (pmpError) {
-        console.error('PlayerStats pmp query error:', pmpError)
+        console.error('PlayerStats query failed for player_match_performances:', {
+          error: pmpError,
+          userId: profile.id,
+          leagueId: mem.league_id,
+        })
+        throw pmpError
       }
 
-      const hasPmpData = !!(pmpData && pmpData.length > 0)
-      const hasMissingPmpPoints = hasPmpData && pmpData.some(perf => perf.fantasy_points === null || perf.fantasy_points === undefined)
+      console.info('PlayerStats loaded player_match_performances:', {
+        userId: profile.id,
+        leagueId: mem.league_id,
+        rows: pmpData?.length || 0,
+      })
 
-      if (hasPmpData && !hasMissingPmpPoints) {
-        const pmpPlayerIds = new Set(pmpData.map(p => p.player_id))
-        const aggregated = aggregatePlayerStats(pmpData, pmpPlayerIds, playersMap)
-        setStats(aggregated)
+      if (!pmpData || pmpData.length === 0) {
+        console.warn('PlayerStats found no player_match_performances rows for user/league:', {
+          userId: profile.id,
+          leagueId: mem.league_id,
+        })
+        setStats([])
       } else {
-        if (hasMissingPmpPoints) {
-          console.warn('PlayerStats fallback triggered due to missing fantasy_points in player_match_performances')
-        }
-        // Fallback: load from performances table (legacy) with league + squad filtering
-        const { data: squadData, error: squadError } = await supabase
-          .from('squad').select('player_id')
-          .eq('league_id', mem.league_id).eq('user_id', profile.id)
-        if (squadError) throw squadError
-
-        const squadIds = new Set(squadData?.map(s => s.player_id) || [])
-        const squadPlayerIds = [...squadIds]
-        if (squadPlayerIds.length === 0) {
-          setStats([])
-          setLoading(false)
-          return
-        }
-
-        const { data: perfs, error: perfError } = await supabase
-          .from('performances').select('*')
-          .in('player_id', squadPlayerIds)
-        if (perfError) throw perfError
-        const allPerfs = perfs || []
-
-        const aggregated = aggregatePlayerStats(allPerfs, squadIds, playersMap)
+        const aggregated = aggregateStoredStats(pmpData, playersMap)
+        console.info('PlayerStats aggregated player stats:', {
+          players: aggregated.length,
+          records: pmpData.length,
+        })
         setStats(aggregated)
       }
     } catch (e) {
       console.error('PlayerStats load error:', e)
+      setStats([])
     }
     setLoading(false)
   }
