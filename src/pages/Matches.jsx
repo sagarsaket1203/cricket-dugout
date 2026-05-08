@@ -369,81 +369,103 @@ export default function Matches() {
   async function savePerformances() {
     if (!extractedPerfs) return
     setSavingPerfs(true)
-    const { performances: perfs, matchId } = extractedPerfs
-    let saved = 0
+    try {
+      const { performances: perfs, matchId } = extractedPerfs
+      let saved = 0
 
-    for (const perf of perfs) {
-      if (!perf.player_id || !perf.include) continue
-      const { points } = calculateFantasyPoints(perf)
+      for (const perf of perfs) {
+        if (!perf.player_id || !perf.include) continue
+        const calculated = calculateFantasyPoints(perf)
+        const hasValidFantasyPoints = Number.isFinite(calculated?.points)
+        if (!hasValidFantasyPoints) {
+          console.warn('calculateFantasyPoints returned invalid points, defaulting to 0:', { player_id: perf.player_id, match_id: matchId })
+        }
+        const fantasyPoints = hasValidFantasyPoints ? Math.round(calculated.points) : 0
 
-      const balls = perf.balls ?? perf.balls_faced ?? 0
-      const runOuts = perf.runOuts ?? perf.run_outs ?? 0
-      const dismissalType = perf.dismissalType ?? perf.dismissal_type ?? ''
-      const runsConceded = perf.runsConceded ?? perf.runs_conceded ?? 0
-      const overs = perf.overs ?? 0
-      const isDuck = perf.runs === 0 && balls > 0 && dismissalType && dismissalType.toLowerCase() !== 'not out'
-      const isLbw = dismissalType ? dismissalType.toLowerCase().includes('lbw') : false
-      const isBowled = dismissalType ? dismissalType.toLowerCase().includes('bowled') : false
-      const economy = overs > 0 ? runsConceded / overs : null
+        const balls = perf.balls ?? perf.balls_faced ?? 0
+        const runOuts = perf.runOuts ?? perf.run_outs ?? 0
+        const dismissalType = perf.dismissalType ?? perf.dismissal_type ?? ''
+        const runsConceded = perf.runsConceded ?? perf.runs_conceded ?? 0
+        const overs = perf.overs ?? 0
+        const isDuck = perf.runs === 0 && balls > 0 && dismissalType && dismissalType.toLowerCase() !== 'not out'
+        const isLbw = dismissalType ? dismissalType.toLowerCase().includes('lbw') : false
+        const isBowled = dismissalType ? dismissalType.toLowerCase().includes('bowled') : false
+        const economy = overs > 0 ? runsConceded / overs : null
 
-      await supabase.from('performances').upsert({
-        match_id: matchId,
-        player_id: perf.player_id,
-        runs: perf.runs, balls_faced: balls,
-        fours: perf.fours, sixes: perf.sixes,
-        wickets: perf.wickets,
-        maidens: perf.maidens,
-        catches: perf.catches, stumpings: perf.stumpings,
-        run_outs: runOuts,
-        fantasy_points: points
-      }, { onConflict: 'match_id,player_id' })
-
-      // Find all users who have this player in their squad
-      const { data: sq } = await supabase.from('squad').select('user_id, league_id')
-        .eq('player_id', perf.player_id)
-      for (const s of sq || []) {
-        // Insert into player_match_performances for each squad owner
-        await supabase.from('player_match_performances').upsert({
+        const { error: perfUpsertError } = await supabase.from('performances').upsert({
           match_id: matchId,
           player_id: perf.player_id,
-          user_id: s.user_id,
-          league_id: s.league_id,
-          runs: perf.runs,
-          balls_faced: balls,
+          runs: perf.runs, balls_faced: balls,
+          fours: perf.fours, sixes: perf.sixes,
           wickets: perf.wickets,
-          catches: perf.catches,
-          stumpings: perf.stumpings,
-          run_outs: runOuts,
           maidens: perf.maidens,
-          fours: perf.fours,
-          sixes: perf.sixes,
-          economy,
-          is_duck: isDuck,
-          is_lbw: isLbw,
-          is_bowled: isBowled,
-          fantasy_points: points
-        }, { onConflict: 'match_id,player_id,user_id' })
+          catches: perf.catches, stumpings: perf.stumpings,
+          run_outs: runOuts,
+          fantasy_points: fantasyPoints
+        }, { onConflict: 'match_id,player_id' })
+        if (perfUpsertError) throw perfUpsertError
 
-        // Update match_points totals
-        const { data: ex } = await supabase.from('match_points').select('*')
-          .eq('match_id', matchId).eq('user_id', s.user_id).eq('league_id', s.league_id).maybeSingle()
-        if (ex) {
-          await supabase.from('match_points').update({ total_points: ex.total_points + points }).eq('id', ex.id)
-        } else {
-          await supabase.from('match_points').insert({
-            match_id: matchId, user_id: s.user_id, league_id: s.league_id, total_points: points
-          })
+        // Find all users who have this player in their squad
+        const { data: sq, error: squadError } = await supabase.from('squad').select('user_id, league_id')
+          .eq('player_id', perf.player_id)
+        if (squadError) throw squadError
+
+        for (const s of sq || []) {
+          // Insert into player_match_performances for each squad owner
+          const { error: pmpUpsertError } = await supabase.from('player_match_performances').upsert({
+            match_id: matchId,
+            player_id: perf.player_id,
+            user_id: s.user_id,
+            league_id: s.league_id,
+            runs: perf.runs,
+            balls_faced: balls,
+            wickets: perf.wickets,
+            catches: perf.catches,
+            stumpings: perf.stumpings,
+            run_outs: runOuts,
+            maidens: perf.maidens,
+            fours: perf.fours,
+            sixes: perf.sixes,
+            economy,
+            is_duck: isDuck,
+            is_lbw: isLbw,
+            is_bowled: isBowled,
+            fantasy_points: fantasyPoints
+          }, { onConflict: 'match_id,player_id,user_id' })
+          if (pmpUpsertError) throw pmpUpsertError
+
+          // Update match_points totals
+          const { data: ex, error: exError } = await supabase.from('match_points').select('*')
+            .eq('match_id', matchId).eq('user_id', s.user_id).eq('league_id', s.league_id).maybeSingle()
+          if (exError) throw exError
+
+          if (ex) {
+            const { error: matchPointsUpdateError } = await supabase
+              .from('match_points')
+              .update({ total_points: ex.total_points + fantasyPoints })
+              .eq('id', ex.id)
+            if (matchPointsUpdateError) throw matchPointsUpdateError
+          } else {
+            const { error: matchPointsInsertError } = await supabase.from('match_points').insert({
+              match_id: matchId, user_id: s.user_id, league_id: s.league_id, total_points: fantasyPoints
+            })
+            if (matchPointsInsertError) throw matchPointsInsertError
+          }
         }
+        saved++
       }
-      saved++
-    }
 
-    showMsg(`✅ Saved ${saved} performances! Fantasy points updated.`, 'success')
-    setExtractedPerfs(null)
-    setSelectedMatch(null)
-    setManualScorecard({ match_id: null, batting: '', bowling: '', fielding: '' })
-    setSavingPerfs(false)
-    load()
+      showMsg(`✅ Saved ${saved} performances! Fantasy points updated.`, 'success')
+      setExtractedPerfs(null)
+      setSelectedMatch(null)
+      setManualScorecard({ match_id: null, batting: '', bowling: '', fielding: '' })
+      load()
+    } catch (e) {
+      console.error('savePerformances error:', e)
+      showMsg('Failed to save performances: ' + (e.message || 'Unknown error'), 'error')
+    } finally {
+      setSavingPerfs(false)
+    }
   }
 
   function togglePerf(idx) {
