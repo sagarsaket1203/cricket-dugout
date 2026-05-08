@@ -372,6 +372,10 @@ export default function Matches() {
     try {
       const { performances: perfs, matchId } = extractedPerfs
       let saved = 0
+      const toFiniteNumber = (value, fallback = 0) => {
+        const parsed = Number(value)
+        return Number.isFinite(parsed) ? parsed : fallback
+      }
 
       for (const perf of perfs) {
         if (!perf.player_id || !perf.include) continue
@@ -382,24 +386,30 @@ export default function Matches() {
         }
         const fantasyPoints = hasValidFantasyPoints ? Math.round(calculated.points) : 0
 
-        const balls = perf.balls ?? perf.balls_faced ?? 0
-        const runOuts = perf.runOuts ?? perf.run_outs ?? 0
+        const runs = toFiniteNumber(perf.runs)
+        const balls = toFiniteNumber(perf.balls ?? perf.balls_faced)
+        const wickets = toFiniteNumber(perf.wickets)
+        const maidens = toFiniteNumber(perf.maidens)
+        const catches = toFiniteNumber(perf.catches)
+        const stumpings = toFiniteNumber(perf.stumpings)
+        const fours = toFiniteNumber(perf.fours)
+        const sixes = toFiniteNumber(perf.sixes)
+        const runOuts = toFiniteNumber(perf.runOuts ?? perf.run_outs)
         const dismissalType = perf.dismissalType ?? perf.dismissal_type ?? ''
-        const runsConceded = perf.runsConceded ?? perf.runs_conceded ?? 0
-        const overs = perf.overs ?? 0
-        const isDuck = perf.runs === 0 && balls > 0 && dismissalType && dismissalType.toLowerCase() !== 'not out'
+        const runsConceded = toFiniteNumber(perf.runsConceded ?? perf.runs_conceded)
+        const overs = toFiniteNumber(perf.overs)
+        const isDuck = runs === 0 && balls > 0 && dismissalType && dismissalType.toLowerCase() !== 'not out'
         const isLbw = dismissalType ? dismissalType.toLowerCase().includes('lbw') : false
         const isBowled = dismissalType ? dismissalType.toLowerCase().includes('bowled') : false
         const economy = overs > 0 ? runsConceded / overs : null
-
         const { error: perfUpsertError } = await supabase.from('performances').upsert({
           match_id: matchId,
           player_id: perf.player_id,
-          runs: perf.runs, balls_faced: balls,
-          fours: perf.fours, sixes: perf.sixes,
-          wickets: perf.wickets,
-          maidens: perf.maidens,
-          catches: perf.catches, stumpings: perf.stumpings,
+          runs, balls_faced: balls,
+          fours, sixes,
+          wickets,
+          maidens,
+          catches, stumpings,
           run_outs: runOuts,
           fantasy_points: fantasyPoints
         }, { onConflict: 'match_id,player_id' })
@@ -417,15 +427,15 @@ export default function Matches() {
             player_id: perf.player_id,
             user_id: s.user_id,
             league_id: s.league_id,
-            runs: perf.runs,
+            runs,
             balls_faced: balls,
-            wickets: perf.wickets,
-            catches: perf.catches,
-            stumpings: perf.stumpings,
+            wickets,
+            catches,
+            stumpings,
             run_outs: runOuts,
-            maidens: perf.maidens,
-            fours: perf.fours,
-            sixes: perf.sixes,
+            maidens,
+            fours,
+            sixes,
             economy,
             is_duck: isDuck,
             is_lbw: isLbw,
