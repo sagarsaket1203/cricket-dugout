@@ -372,6 +372,10 @@ export default function Matches() {
     try {
       const { performances: perfs, matchId } = extractedPerfs
       let saved = 0
+      const toFiniteNumber = (value, fallback = 0) => {
+        const parsed = Number(value)
+        return Number.isFinite(parsed) ? parsed : fallback
+      }
 
       for (const perf of perfs) {
         if (!perf.player_id || !perf.include) continue
@@ -382,24 +386,22 @@ export default function Matches() {
         }
         const fantasyPoints = hasValidFantasyPoints ? Math.round(calculated.points) : 0
 
-        const runs = Number.isFinite(Number(perf.runs)) ? Number(perf.runs) : 0
-        const balls = Number.isFinite(Number(perf.balls ?? perf.balls_faced)) ? Number(perf.balls ?? perf.balls_faced) : 0
-        const wickets = Number.isFinite(Number(perf.wickets)) ? Number(perf.wickets) : 0
-        const maidens = Number.isFinite(Number(perf.maidens)) ? Number(perf.maidens) : 0
-        const catches = Number.isFinite(Number(perf.catches)) ? Number(perf.catches) : 0
-        const stumpings = Number.isFinite(Number(perf.stumpings)) ? Number(perf.stumpings) : 0
-        const fours = Number.isFinite(Number(perf.fours)) ? Number(perf.fours) : 0
-        const sixes = Number.isFinite(Number(perf.sixes)) ? Number(perf.sixes) : 0
-        const runOuts = Number.isFinite(Number(perf.runOuts ?? perf.run_outs)) ? Number(perf.runOuts ?? perf.run_outs) : 0
+        const runs = toFiniteNumber(perf.runs)
+        const balls = toFiniteNumber(perf.balls ?? perf.balls_faced)
+        const wickets = toFiniteNumber(perf.wickets)
+        const maidens = toFiniteNumber(perf.maidens)
+        const catches = toFiniteNumber(perf.catches)
+        const stumpings = toFiniteNumber(perf.stumpings)
+        const fours = toFiniteNumber(perf.fours)
+        const sixes = toFiniteNumber(perf.sixes)
+        const runOuts = toFiniteNumber(perf.runOuts ?? perf.run_outs)
         const dismissalType = perf.dismissalType ?? perf.dismissal_type ?? ''
-        const runsConceded = Number.isFinite(Number(perf.runsConceded ?? perf.runs_conceded)) ? Number(perf.runsConceded ?? perf.runs_conceded) : 0
-        const overs = Number.isFinite(Number(perf.overs)) ? Number(perf.overs) : 0
+        const runsConceded = toFiniteNumber(perf.runsConceded ?? perf.runs_conceded)
+        const overs = toFiniteNumber(perf.overs)
         const isDuck = runs === 0 && balls > 0 && dismissalType && dismissalType.toLowerCase() !== 'not out'
         const isLbw = dismissalType ? dismissalType.toLowerCase().includes('lbw') : false
         const isBowled = dismissalType ? dismissalType.toLowerCase().includes('bowled') : false
         const economy = overs > 0 ? runsConceded / overs : null
-        console.info('Saving performance with fantasy points:', { matchId, playerId: perf.player_id, fantasyPoints })
-
         const { error: perfUpsertError } = await supabase.from('performances').upsert({
           match_id: matchId,
           player_id: perf.player_id,

@@ -76,7 +76,7 @@ export default function PlayerStats() {
           userId: profile.id,
           leagueId: mem.league_id,
         })
-        throw pmpError
+        throw new Error(`Failed to load player match performances: ${pmpError.message || 'Unknown error'}`)
       }
 
       console.info('PlayerStats loaded player_match_performances:', {
