@@ -73,7 +73,7 @@ export default function Matches() {
         setMatchPoints(ptsMap)
 
         const { data: perfs } = await supabase
-          .from('performances').select('*, players(name,role)')
+          .from('player_match_performances').select('*, players(name,role)')
         const perfMap = {}
         perfs?.forEach(p => {
           if (!perfMap[p.match_id]) perfMap[p.match_id] = []
@@ -132,7 +132,7 @@ export default function Matches() {
     if (!confirm('Delete this match and all its performances?')) return
     await supabase.from('player_match_performances').delete().eq('match_id', matchId)
     await supabase.from('match_points').delete().eq('match_id', matchId)
-    await supabase.from('performances').delete().eq('match_id', matchId)
+    await supabase.from('player_match_performances').delete().eq('match_id', matchId)
     await supabase.from('matches').delete().eq('id', matchId)
     showMsg('Match deleted.')
     load()
@@ -386,7 +386,7 @@ export default function Matches() {
       const isBowled = dismissalType ? dismissalType.toLowerCase().includes('bowled') : false
       const economy = overs > 0 ? runsConceded / overs : null
 
-      await supabase.from('performances').upsert({
+      await supabase.from('player_match_performances').upsert({
         match_id: matchId,
         player_id: perf.player_id,
         runs: perf.runs, balls_faced: balls,
